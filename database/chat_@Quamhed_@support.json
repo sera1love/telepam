@@ -1,0 +1,235 @@
+[
+  {
+    "text": "авыпыпывп",
+    "from": "@Quamhed",
+    "time": "21:47:11",
+    "type": "text",
+    "replyTo": null,
+    "replyToIndex": null,
+    "attachments": [],
+    "id": 0,
+    "status": "sent",
+    "readBy": [
+      "@Quamhed"
+    ],
+    "reactions": []
+  },
+  {
+    "text": "кпкпкправоепопароапоапоочаппвары",
+    "from": "@Quamhed",
+    "time": "21:47:18",
+    "type": "text",
+    "replyTo": null,
+    "replyToIndex": null,
+    "attachments": [],
+    "id": 1,
+    "status": "sent",
+    "readBy": [
+      "@Quamhed"
+    ],
+    "reactions": []
+  },
+  {
+    "text": "🙏",
+    "from": "@Quamhed",
+    "time": "21:47:22",
+    "type": "sticker",
+    "id": 2,
+    "status": "sent",
+    "readBy": [
+      "@Quamhed"
+    ],
+    "reactions": []
+  },
+  {
+    "text": "👎👎👎👎",
+    "from": "@Quamhed",
+    "time": "21:47:25",
+    "type": "text",
+    "replyTo": null,
+    "replyToIndex": null,
+    "attachments": [],
+    "id": 3,
+    "status": "sent",
+    "readBy": [
+      "@Quamhed"
+    ],
+    "reactions": []
+  },
+  {
+    "text": "",
+    "from": "@Quamhed",
+    "time": "21:47:41",
+    "type": "image",
+    "replyTo": null,
+    "replyToIndex": null,
+    "attachments": [
+      {
+        "url": "/uploads/1774378061915-d5271fc5c01c944833472e58f3e238b3.jpg",
+        "type": "image/jpeg",
+        "name": "d5271fc5c01c944833472e58f3e238b3.jpg"
+      },
+      {
+        "url": "/uploads/1774378061925-1774362566808-Serega_Pirat_-_Mojj_bajjk_79406847.mp3",
+        "type": "audio/mpeg",
+        "name": "1774362566808-Serega_Pirat_-_Mojj_bajjk_79406847.mp3"
+      },
+      {
+        "url": "/uploads/1774378061969-Working_Radio_3.0.zip",
+        "type": "application/x-zip-compressed",
+        "name": "Working Radio 3.0.zip"
+      }
+    ],
+    "id": 4,
+    "status": "sent",
+    "readBy": [
+      "@Quamhed"
+    ],
+    "reactions": []
+  },
+  {
+    "text": "",
+    "from": "@Quamhed",
+    "time": "21:47:50",
+    "type": "audio",
+    "replyTo": null,
+    "replyToIndex": null,
+    "attachments": [
+      {
+        "url": "/uploads/1774378070013-1774362566808-Serega_Pirat_-_Mojj_bajjk_79406847.mp3",
+        "type": "audio/mpeg",
+        "name": "1774362566808-Serega_Pirat_-_Mojj_bajjk_79406847.mp3"
+      }
+    ],
+    "id": 5,
+    "status": "sent",
+    "readBy": [
+      "@Quamhed"
+    ],
+    "reactions": [
+      {
+        "emoji": "❤️",
+        "userId": "@Quamhed",
+        "count": 1
+      }
+    ]
+  },
+  {
+    "text": "",
+    "from": "@Quamhed",
+    "time": "21:47:57",
+    "type": "image",
+    "replyTo": null,
+    "replyToIndex": null,
+    "attachments": [
+      {
+        "url": "/uploads/1774378077684-d5271fc5c01c944833472e58f3e238b3.jpg",
+        "type": "image/jpeg",
+        "name": "d5271fc5c01c944833472e58f3e238b3.jpg"
+      }
+    ],
+    "id": 6,
+    "status": "sent",
+    "readBy": [
+      "@Quamhed"
+    ],
+    "reactions": []
+  },
+  {
+    "text": "/uploads/1774378146866-voice.webm",
+    "from": "@Quamhed",
+    "time": "21:49:06",
+    "type": "voice",
+    "duration": "0:03",
+    "id": 7,
+    "status": "sent",
+    "readBy": [
+      "@Quamhed"
+    ],
+    "reactions": []
+  },
+  {
+    "text": "",
+    "from": "@Quamhed",
+    "time": "21:50:28",
+    "type": "audio",
+    "replyTo": null,
+    "replyToIndex": null,
+    "attachments": [
+      {
+        "url": "/uploads/1774378228092-Azgor_-_Edu_po_shosse_79492600.mp3",
+        "type": "audio/mpeg",
+        "name": "Azgor_-_Edu_po_shosse_79492600.mp3"
+      }
+    ],
+    "id": 8,
+    "status": "sent",
+    "readBy": [
+      "@Quamhed"
+    ],
+    "reactions": []
+  },
+  {
+    "text": "пыккыкп",
+    "from": "@Quamhed",
+    "time": "22:18:46",
+    "type": "text",
+    "replyTo": null,
+    "id": 9,
+    "status": "sent",
+    "readBy": [
+      "@Quamhed"
+    ],
+    "reactions": []
+  },
+  {
+    "text": "/uploads/1774379939364-voice.webm",
+    "from": "@Quamhed",
+    "time": "22:18:59",
+    "type": "audio",
+    "id": 10,
+    "status": "sent",
+    "readBy": [
+      "@Quamhed"
+    ],
+    "reactions": []
+  },
+  {
+    "text": "/uploads/1774379950906-voice.webm",
+    "from": "@Quamhed",
+    "time": "22:19:10",
+    "type": "audio",
+    "id": 11,
+    "status": "sent",
+    "readBy": [
+      "@Quamhed"
+    ],
+    "reactions": []
+  },
+  {
+    "text": "/uploads/1774382470024-95d491b9740a4b039fe318a324811138.png",
+    "fileName": "95d491b9740a4b039fe318a324811138.png",
+    "from": "@Quamhed",
+    "time": "23:01:10",
+    "type": "image",
+    "id": 12,
+    "status": "sent",
+    "readBy": [
+      "@Quamhed"
+    ],
+    "reactions": []
+  },
+  {
+    "text": "/uploads/1774383823125-app-release.apk",
+    "fileName": "app-release.apk",
+    "from": "@support",
+    "time": "23:23:43",
+    "type": "file",
+    "id": 13,
+    "status": "sent",
+    "readBy": [
+      "@support"
+    ],
+    "reactions": []
+  }
+]

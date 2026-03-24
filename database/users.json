@@ -1,0 +1,38 @@
+{
+  "@support": {
+    "id": "@support",
+    "name": "Поддержка",
+    "surname": "Telepam",
+    "password": "support123",
+    "avatarColor": "#0088cc",
+    "avatarImage": null,
+    "bio": "Официальная поддержка Telepam",
+    "channels": [],
+    "status": "online",
+    "lastSeen": "2026-03-24T20:04:21.928Z"
+  },
+  "@Quamhed": {
+    "id": "@Quamhed",
+    "name": "Валерий",
+    "surname": "Айсов",
+    "password": "1993q1993QW",
+    "avatarColor": "#007aff",
+    "avatarImage": "/uploads/1774377176999-d5271fc5c01c944833472e58f3e238b3.jpg",
+    "bio": "",
+    "channels": [],
+    "status": "offline",
+    "lastSeen": "2026-03-24T20:25:02.346Z"
+  },
+  "@DrNobody": {
+    "id": "@DrNobody",
+    "name": "Dr.Nobody",
+    "surname": "",
+    "password": "09871234",
+    "avatarColor": "#ffffff",
+    "avatarImage": "/uploads/1774378206294-photo_2026-02-27_15-13-53.jpg",
+    "bio": "",
+    "channels": [],
+    "status": "offline",
+    "lastSeen": "2026-03-24T20:31:12.607Z"
+  }
+}

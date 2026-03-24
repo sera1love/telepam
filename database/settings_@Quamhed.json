@@ -1,0 +1,10 @@
+{
+  "privacy": {
+    "showBio": true,
+    "showChannels": true,
+    "whoCanMessage": "all"
+  },
+  "blocked": [],
+  "notifications": true,
+  "sound": true
+}
