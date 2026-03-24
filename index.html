@@ -25,9 +25,13 @@ body { background: var(--bg-app); color: var(--text-primary); height: 100vh; dis
 @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
 @keyframes slideIn { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
 @keyframes pulse { 0% { transform: scale(1); } 50% { transform: scale(1.05); } 100% { transform: scale(1); } }
+@keyframes wave { 0%, 100% { height: 4px; } 50% { height: 24px; } }
 .animate-fade { animation: fadeIn var(--animation-speed) ease; }
 .animate-slide { animation: slideIn var(--animation-speed) ease; }
 .animate-pulse { animation: pulse 1s infinite; }
+.waveform-bar { display: inline-block; width: 3px; margin: 0 1px; background: rgba(255,255,255,0.8); border-radius: 2px; animation: wave 0.6s ease-in-out infinite; }
+.waveform-bar:nth-child(odd) { animation-delay: 0.1s; }
+.waveform-bar:nth-child(even) { animation-delay: 0.2s; }
 @media (max-width: 768px) {
 :root { --sidebar-width: 100%; }
 .sidebar { width: 100% !important; }
@@ -92,6 +96,11 @@ body { background: var(--bg-app); color: var(--text-primary); height: 100vh; dis
 .send-btn { background: var(--accent); color: white; }
 .record-btn { background: var(--danger); color: white; position: relative; }
 .record-btn.recording { animation: pulse 1s infinite; }
+.voice-message { display: flex; align-items: center; gap: 10px; padding: 12px 16px; background: rgba(0,0,0,0.15); border-radius: 12px; margin-top: 8px; min-width: 200px; }
+.voice-play-btn { width: 42px; height: 42px; border-radius: 50%; background: var(--accent); color: white; border: none; cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 18px; flex-shrink: 0; }
+.voice-play-btn.playing { animation: pulse 1s infinite; }
+.voice-waveform { flex: 1; display: flex; align-items: center; gap: 2px; height: 32px; overflow: hidden; }
+.voice-duration { font-size: 12px; min-width: 45px; text-align: right; opacity: 0.8; }
 .stickers-panel, .emoji-picker, .forward-panel { position: absolute; background: var(--bg-app); border: 1px solid var(--border); border-radius: 12px; padding: 15px; box-shadow: 0 4px 20px rgba(0,0,0,0.2); z-index: 100; display: grid; gap: 8px; max-height: 300px; overflow-y: auto; }
 .stickers-panel { bottom: 70px; right: 70px; grid-template-columns: repeat(8, 1fr); }
 .emoji-picker { bottom: 70px; right: 120px; grid-template-columns: repeat(8, 1fr); }
@@ -214,6 +223,7 @@ body { background: var(--bg-app); color: var(--text-primary); height: 100vh; dis
 <div class="avatar" id="headerAvatar" style="width:45px; height:45px; font-size:18px;" onclick="event.stopPropagation(); viewUserProfile(currentChatPartner)">?</div>
 <div style="margin-left:12px;">
 <div style="font-weight:600;" id="headerName">Выберите чат</div>
+<div class="chat-status" id="headerStatus"></div>
 </div>
 </div>
 <button class="icon-btn" onclick="event.stopPropagation(); toggleSettings()">⋮</button>
@@ -236,7 +246,7 @@ body { background: var(--bg-app); color: var(--text-primary); height: 100vh; dis
 <button class="icon-btn" onclick="toggleStickers()">🎭</button>
 <button class="icon-btn" onclick="toggleEmoji()">😊</button>
 <input type="text" class="message-input" id="messageInput" placeholder="Написать сообщение..." onkeypress="handleKeyPress(event)" oninput="sendTyping()">
-<button class="icon-btn record-btn" id="recordBtn" onmousedown="startRecording()" onmouseup="stopRecording()" ontouchstart="startRecording()" ontouchend="stopRecording()">🎤<span class="mode-indicator" id="recordMode">🎤</span></button>
+<button class="icon-btn record-btn" id="recordBtn" onmousedown="startRecording()" onmouseup="stopRecording()" ontouchstart="startRecording()" ontouchend="stopRecording()">🎤</button>
 <button class="icon-btn send-btn" onclick="sendMessage()">➤</button>
 </div>
 <div class="stickers-panel hidden" id="stickersPanel"></div>
@@ -270,7 +280,7 @@ body { background: var(--bg-app); color: var(--text-primary); height: 100vh; dis
 <div id="profileModal" class="modal-overlay hidden">
 <div class="modal">
 <h2>👤 Профиль</h2>
-<div class="form-group"><label>ID</label><input type="text" id="profileId"></div>
+<div class="form-group"><label>ID</label><input type="text" id="profileId" readonly></div>
 <div class="form-group"><label>Имя</label><input type="text" id="profileName"></div>
 <div class="form-group"><label>Фамилия</label><input type="text" id="profileSurname"></div>
 <div class="form-group"><label>Аватарка</label><input type="file" id="profileAvatar" accept="image/*"></div>
@@ -360,928 +370,1185 @@ let selectedMembers = [];
 let allGroups = [];
 let userSettings = { accentColor: '#007aff', animationSpeed: '0.3s', sound: true };
 let isRecording = false;
-let recordingType = 'audio';
 let mediaRecorder = null;
 let mediaChunks = [];
 let recordingTimer = null;
 let recordingSeconds = 0;
 let recordPressTimer = null;
-let replyToMessage = null;
-let forwardMessage = null;
+let replyToMsg = null;
+let forwardMsg = null;
+let typingTimeout = null;
 const stickers = ['👍','👎','❤️','🔥','😂','😍','😢','😡','🎉','👋','🙏','💪'];
 const emojis = ['😀','😂','😍','🥰','😎','🤔','😢','😡','👍','👎','❤️','🔥'];
 
-// === ВОСПРОИЗВЕДЕНИЕ ЗВУКА УВЕДОМЛЕНИЯ ===
-function playNotificationSound() {
-    if (userSettings.sound) {
-        const audio = document.getElementById('notificationSound');
-        if (audio) {
-            audio.volume = 0.5;
-            audio.play().catch(() => {});
-        }
-    }
-}
-
-window.onload = () => {
-    console.log('App loading...');
-    if (isDark) document.documentElement.setAttribute('data-theme', 'dark');
-    initStickers();
-    initEmojiPicker();
-    loadUserSettings();
-    checkAuth();
-    if ('Notification' in window) Notification.requestPermission();
-    navigator.mediaDevices.getUserMedia({ audio: true }).catch(() => {});
+// === ГЛОБАЛЬНЫЙ ОБРАБОТЧИК ОШИБОК ===
+window.onerror = function(message, source, lineno, colno, error) {
+console.error('Global error:', message);
+return true;
 };
 
-function loadUserSettings() {
-    const saved = localStorage.getItem('mm_settings_' + (currentUser?.id || 'default'));
-    if (saved) {
-        userSettings = JSON.parse(saved);
-        document.documentElement.style.setProperty('--accent', userSettings.accentColor);
-        document.documentElement.style.setProperty('--animation-speed', userSettings.animationSpeed);
-    }
+window.onunhandledrejection = function(event) {
+console.error('Unhandled promise rejection:', event.reason);
+event.preventDefault();
+};
+
+// === ГЕНЕРАЦИЯ ВОЛН ДЛЯ ГОЛОСОВОГО ===
+function generateWaveformBars(isPlaying) {
+const heights = [8, 15, 22, 12, 18, 25, 10, 20, 14, 8, 16, 24, 11, 19, 13, 9, 17, 23, 12, 20];
+return heights.map((h, i) => 
+`<div class="waveform-bar" style="height:${h}px;animation-delay:${i * 0.05}s;animation-play-state:${isPlaying ? 'running' : 'paused'}"></div>`
+).join('');
+}
+
+// === РЕНДЕРИНГ ГОЛОСОВОГО СООБЩЕНИЯ ===
+function renderVoiceMessage(url, duration, isPlaying = false) {
+const bars = generateWaveformBars(isPlaying);
+return `
+<div class="voice-message">
+<button class="voice-play-btn ${isPlaying ? 'playing' : ''}" onclick="playVoice('${url}', this)">▶</button>
+<div class="voice-waveform">${bars}</div>
+<div class="voice-duration">${duration || '0:00'}</div>
+</div>
+`;
+}
+
+// === ИНИЦИАЛИЗАЦИЯ ===
+window.onload = async () => {
+console.log('Telepam loading...');
+if (isDark) document.documentElement.setAttribute('data-theme', 'dark');
+initStickers();
+initEmojiPicker();
+await loadUserSettings();
+await checkAuth();
+if ('Notification' in window) Notification.requestPermission();
+navigator.mediaDevices.getUserMedia({ audio: true }).catch(() => {});
+};
+
+// === НАСТРОЙКИ - ИСПРАВЛЕНО ===
+async function loadUserSettings() {
+try {
+const saved = localStorage.getItem('telepam_settings');
+if (saved) {
+userSettings = JSON.parse(saved);
+document.documentElement.style.setProperty('--accent', userSettings.accentColor);
+document.documentElement.style.setProperty('--animation-speed', userSettings.animationSpeed);
+}
+} catch (e) {
+console.error('Error loading settings:', e);
+}
 }
 
 function initStickers() {
-    const panel = document.getElementById('stickersPanel');
-    if (!panel) return;
-    stickers.forEach(s => {
-        const btn = document.createElement('span');
-        btn.className = 'sticker-btn';
-        btn.textContent = s;
-        btn.onclick = () => sendSticker(s);
-        panel.appendChild(btn);
-    });
+const panel = document.getElementById('stickersPanel');
+if (!panel) return;
+stickers.forEach(s => {
+const btn = document.createElement('span');
+btn.className = 'sticker-btn';
+btn.textContent = s;
+btn.onclick = () => sendSticker(s);
+panel.appendChild(btn);
+});
 }
 
 function initEmojiPicker() {
-    const picker = document.getElementById('emojiPicker');
-    if (!picker) return;
-    emojis.forEach(e => {
-        const btn = document.createElement('span');
-        btn.className = 'emoji-btn';
-        btn.textContent = e;
-        btn.onclick = () => insertEmoji(e);
-        picker.appendChild(btn);
-    });
+const picker = document.getElementById('emojiPicker');
+if (!picker) return;
+emojis.forEach(e => {
+const btn = document.createElement('span');
+btn.className = 'emoji-btn';
+btn.textContent = e;
+btn.onclick = () => insertEmoji(e);
+picker.appendChild(btn);
+});
 }
 
+// === АВТОРИЗАЦИЯ - ИСПРАВЛЕНО ===
 function switchAuthTab(tab) {
-    document.getElementById('loginTab').classList.toggle('active', tab === 'login');
-    document.getElementById('registerTab').classList.toggle('active', tab === 'register');
-    document.getElementById('loginForm').classList.toggle('hidden', tab !== 'login');
-    document.getElementById('registerForm').classList.toggle('hidden', tab !== 'register');
+document.getElementById('loginTab').classList.toggle('active', tab === 'login');
+document.getElementById('registerTab').classList.toggle('active', tab === 'register');
+document.getElementById('loginForm').classList.toggle('hidden', tab !== 'login');
+document.getElementById('registerForm').classList.toggle('hidden', tab !== 'register');
 }
 
-function checkAuth() {
-    try {
-        const saved = localStorage.getItem('mm_user');
-        if (saved) {
-            currentUser = JSON.parse(saved);
-            socket.emit('user_login', currentUser.id);
-            loadUserSettings();
-            showApp();
-        } else {
-            document.getElementById('authModal').classList.remove('hidden');
-        }
-    } catch (e) {
-        document.getElementById('authModal').classList.remove('hidden');
-    }
+async function checkAuth() {
+try {
+const saved = localStorage.getItem('telepam_user');
+console.log('Checking auth, saved:', saved);
+if (saved) {
+currentUser = JSON.parse(saved);
+console.log('User loaded:', currentUser.id);
+socket.emit('user_login', currentUser.id);
+await loadUserSettings();
+await showApp();
+} else {
+console.log('No saved user, showing auth modal');
+document.getElementById('authModal').classList.remove('hidden');
+}
+} catch (e) {
+console.error('Auth error:', e);
+localStorage.removeItem('telepam_user');
+document.getElementById('authModal').classList.remove('hidden');
+}
 }
 
 async function handleLogin() {
-    try {
-        const id = document.getElementById('loginId').value.trim();
-        const pass = document.getElementById('loginPass').value;
-        if (!id.startsWith('@')) { alert('ID должен начинаться с @'); return; }
-        const res = await fetch('/api/login', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ id, password: pass })
-        });
-        const data = await res.json();
-        if (data.success) {
-            currentUser = data.user;
-            localStorage.setItem('mm_user', JSON.stringify(currentUser));
-            socket.emit('user_login', currentUser.id);
-            document.getElementById('authModal').classList.add('hidden');
-            showApp();
-        } else {
-            alert(data.error);
-        }
-    } catch (e) {
-        alert('Ошибка: ' + e.message);
-    }
+try {
+const id = document.getElementById('loginId').value.trim();
+const pass = document.getElementById('loginPass').value;
+if (!id.startsWith('@')) { alert('ID должен начинаться с @'); return; }
+const res = await fetch('/api/login', {
+method: 'POST',
+headers: { 'Content-Type': 'application/json' },
+body: JSON.stringify({ id, password: pass })
+});
+const data = await res.json();
+if (data.success) {
+currentUser = data.user;
+localStorage.setItem('telepam_user', JSON.stringify(currentUser));
+console.log('User saved to localStorage');
+socket.emit('user_login', currentUser.id);
+document.getElementById('authModal').classList.add('hidden');
+await showApp();
+} else {
+alert(data.error);
+}
+} catch (e) {
+alert('Ошибка: ' + e.message);
+}
 }
 
 async function handleRegister() {
-    try {
-        const id = document.getElementById('authId').value.trim();
-        const name = document.getElementById('authName').value.trim();
-        const surname = document.getElementById('authSurname').value.trim();
-        const pass = document.getElementById('authPass').value;
-        const color = document.getElementById('authColor').value;
-        const bio = document.getElementById('authBio').value;
-        const avatarFile = document.getElementById('authAvatar').files[0];
-        if (!id.startsWith('@')) { alert('ID должен начинаться с @'); return; }
-        if (!name) { alert('Введите имя'); return; }
-        let avatarUrl = null;
-        if (avatarFile) {
-            const formData = new FormData();
-            formData.append('file', avatarFile);
-            const res = await fetch('/api/upload', { method: 'POST', body: formData });
-            const data = await res.json();
-            avatarUrl = data.url;
-        }
-        const res = await fetch('/api/register', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ id, name, surname, password: pass, avatarColor: color, avatarImage: avatarUrl, bio })
-        });
-        const data = await res.json();
-        if (data.success) {
-            currentUser = data.user;
-            localStorage.setItem('mm_user', JSON.stringify(currentUser));
-            socket.emit('user_login', currentUser.id);
-            document.getElementById('authModal').classList.add('hidden');
-            showApp();
-        } else {
-            alert(data.error);
-        }
-    } catch (e) {
-        alert('Ошибка: ' + e.message);
-    }
+try {
+const id = document.getElementById('authId').value.trim();
+const name = document.getElementById('authName').value.trim();
+const surname = document.getElementById('authSurname').value.trim();
+const pass = document.getElementById('authPass').value;
+const color = document.getElementById('authColor').value;
+const bio = document.getElementById('authBio').value;
+const avatarFile = document.getElementById('authAvatar').files[0];
+if (!id.startsWith('@')) { alert('ID должен начинаться с @'); return; }
+if (!name) { alert('Введите имя'); return; }
+let avatarUrl = null;
+if (avatarFile) {
+const formData = new FormData();
+formData.append('file', avatarFile);
+const res = await fetch('/api/upload', { method: 'POST', body: formData });
+const data = await res.json();
+avatarUrl = data.url;
+}
+const res = await fetch('/api/register', {
+method: 'POST',
+headers: { 'Content-Type': 'application/json' },
+body: JSON.stringify({ id, name, surname, password: pass, avatarColor: color, avatarImage: avatarUrl, bio })
+});
+const data = await res.json();
+if (data.success) {
+currentUser = data.user;
+localStorage.setItem('telepam_user', JSON.stringify(currentUser));
+socket.emit('user_login', currentUser.id);
+document.getElementById('authModal').classList.add('hidden');
+await showApp();
+} else {
+alert(data.error);
+}
+} catch (e) {
+alert('Ошибка: ' + e.message);
+}
 }
 
-function showApp() {
-    const appInterface = document.getElementById('appInterface');
-    appInterface.classList.remove('hidden');
-    appInterface.style.display = 'flex';
-    updateMyProfile();
-    loadUsers();
-    loadFriends();
-    loadChats();
-    loadFolders();
-    loadGroups();
-    loadUserSettings();
+// === ПРИЛОЖЕНИЕ ===
+async function showApp() {
+try {
+document.getElementById('appInterface').classList.remove('hidden');
+document.getElementById('appInterface').style.display = 'flex';
+updateMyProfile();
+await loadUsers();
+await loadFriends();
+await loadChats();
+await loadFolders();
+await loadGroups();
+} catch (e) {
+console.error('Error showing app:', e);
+}
 }
 
 function updateMyProfile() {
-    const btn = document.getElementById('myProfileBtn');
-    const avatar = document.getElementById('myProfileAvatar');
-    const name = document.getElementById('myProfileName');
-    const id = document.getElementById('myProfileId');
-    if (currentUser.avatarImage) {
-        btn.innerHTML = `<img src="${currentUser.avatarImage}" alt="">`;
-        avatar.innerHTML = `<img src="${currentUser.avatarImage}" alt="">`;
-    } else {
-        btn.textContent = currentUser.id[1].toUpperCase();
-        avatar.textContent = currentUser.id[1].toUpperCase();
-    }
-    btn.style.background = currentUser.avatarColor;
-    avatar.style.background = currentUser.avatarColor;
-    name.textContent = `${currentUser.name} ${currentUser.surname}`;
-    id.textContent = currentUser.id;
+const btn = document.getElementById('myProfileBtn');
+const avatar = document.getElementById('myProfileAvatar');
+const name = document.getElementById('myProfileName');
+const id = document.getElementById('myProfileId');
+if (currentUser.avatarImage) {
+btn.innerHTML = `<img src="${currentUser.avatarImage}" alt="">`;
+avatar.innerHTML = `<img src="${currentUser.avatarImage}" alt="">`;
+} else {
+btn.textContent = currentUser.id[1].toUpperCase();
+avatar.textContent = currentUser.id[1].toUpperCase();
+}
+btn.style.background = currentUser.avatarColor;
+avatar.style.background = currentUser.avatarColor;
+name.textContent = `${currentUser.name} ${currentUser.surname}`;
+id.textContent = currentUser.id;
 }
 
 async function loadUsers() {
-    const res = await fetch('/api/users');
-    allUsers = await res.json();
+const res = await fetch('/api/users');
+allUsers = await res.json();
 }
 
 async function loadFriends() {
-    const res = await fetch(`/api/friends/${currentUser.id}`);
-    friends = await res.json();
+const res = await fetch(`/api/friends/${currentUser.id}`);
+friends = await res.json();
 }
 
 async function loadGroups() {
-    const res = await fetch('/api/groups');
-    allGroups = await res.json();
+const res = await fetch('/api/groups');
+allGroups = await res.json();
 }
 
 async function loadChats() {
-    const res = await fetch(`/api/chats/${currentUser.id}`);
-    const chats = await res.json();
-    const list = document.getElementById('chatList');
-    list.innerHTML = '';
-    const filteredChats = currentFolder === 'all' ? chats : chats.filter(c => {
-        const folder = folders.find(f => f.id === currentFolder);
-        return folder?.chats?.includes(c.id);
-    });
-    if (filteredChats.length === 0) {
-        const support = allUsers.find(u => u.id === '@support') || { id: '@support', name: 'Поддержка', surname: 'Telepam', avatarColor: '#0088cc', online: true };
-        addChatToList(list, support, 'Напишите в поддержку!', 'private');
-    }
-    filteredChats.forEach(chat => {
-        const user = allUsers.find(u => u.id === chat.id);
-        addChatToList(list, {
-            ...chat,
-            online: chat.online || (user ? user.online : false),
-            avatarImage: chat.avatarImage || (user ? user.avatarImage : null)
-        }, chat.lastMsg, chat.type || 'private', chat.members);
-    });
+const res = await fetch(`/api/chats/${currentUser.id}`);
+const chats = await res.json();
+const list = document.getElementById('chatList');
+if (!list) return;
+list.innerHTML = '';
+const filteredChats = currentFolder === 'all' ? chats : chats.filter(c => {
+const folder = folders.find(f => f.id === currentFolder);
+return folder?.chats?.includes(c.id);
+});
+if (filteredChats.length === 0) {
+const support = allUsers.find(u => u.id === '@support') || { id: '@support', name: 'Поддержка', surname: 'Telepam', avatarColor: '#0088cc', online: true };
+addChatToList(list, support, 'Напишите в поддержку!', 'private');
+}
+filteredChats.forEach(chat => {
+const user = allUsers.find(u => u.id === chat.id);
+addChatToList(list, {
+...chat,
+online: chat.online || (user ? user.online : false),
+avatarImage: chat.avatarImage || (user ? user.avatarImage : null)
+}, chat.lastMsg, chat.type || 'private', chat.members);
+});
 }
 
 function addChatToList(list, chat, lastMsg, type = 'private', membersCount) {
-    const div = document.createElement('div');
-    div.className = 'chat-item animate-fade';
-    let avatarContent = chat.id[1].toUpperCase();
-    if (chat.avatarImage) avatarContent = `<img src="${chat.avatarImage}" alt="">`;
-    const isFriend = friends.find(f => f.id === chat.id);
-    div.innerHTML = `
-    <div class="avatar" style="background:${chat.avatarColor || '#667eea'}" onclick="event.stopPropagation(); viewUserProfile('${chat.id}')">${avatarContent}
-    ${type === 'private' ? `<div class="online-indicator ${chat.online ? 'online' : 'offline'}"></div>` : ''}
-    </div>
-    <div class="chat-info">
-    <div class="chat-name">${chat.name} ${isFriend ? '<span class="friend-badge">Друг</span>' : ''} ${type === 'group' ? `(${membersCount})` : ''} ${type === 'channel' ? '📢' : ''}</div>
-    <div class="last-message">${lastMsg}</div>
-    </div>
-    `;
-    div.onclick = () => openChat(chat.id, type);
-    list.appendChild(div);
-}
-
-async function searchUsers() {
-    const query = document.getElementById('searchInput').value.trim();
-    const suggestions = document.getElementById('searchSuggestions');
-    if (query.length < 1) { suggestions.classList.add('hidden'); return; }
-    const res = await fetch(`/api/users/search/${query}?exclude=${currentUser.id}`);
-    const users = await res.json();
-    suggestions.innerHTML = '';
-    users.forEach(u => {
-        const div = document.createElement('div');
-        div.className = 'suggestion-item animate-fade';
-        let avatarContent = u.id[1].toUpperCase();
-        if (u.avatarImage) avatarContent = `<img src="${u.avatarImage}" style="width:35px;height:35px;border-radius:50%">`;
-        div.innerHTML = `<div class="avatar" style="width:35px;height:35px;font-size:14px;background:${u.avatarColor}">${avatarContent}</div><div><b>${u.id}</b><br><small>${u.name} ${u.surname}</small></div>`;
-        div.onclick = () => { openChat(u.id, 'private'); suggestions.classList.add('hidden'); document.getElementById('searchInput').value = ''; };
-        suggestions.appendChild(div);
-    });
-    suggestions.classList.toggle('hidden', users.length === 0);
+const div = document.createElement('div');
+div.className = 'chat-item animate-fade';
+let avatarContent = chat.id[1].toUpperCase();
+if (chat.avatarImage) avatarContent = `<img src="${chat.avatarImage}" alt="">`;
+const isFriend = friends.find(f => f.id === chat.id);
+div.innerHTML = `
+<div class="avatar" style="background:${chat.avatarColor || '#667eea'}" onclick="event.stopPropagation(); viewUserProfile('${chat.id}')">${avatarContent}
+${type === 'private' ? `<div class="online-indicator ${chat.online ? 'online' : 'offline'}"></div>` : ''}
+</div>
+<div class="chat-info">
+<div class="chat-name">${chat.name} ${isFriend ? '<span class="friend-badge">Друг</span>' : ''} ${type === 'group' ? `(${membersCount})` : ''} ${type === 'channel' ? '📢' : ''}</div>
+<div class="last-message">${lastMsg || 'Нет сообщений'}</div>
+</div>
+`;
+div.onclick = () => openChat(chat.id, type);
+list.appendChild(div);
 }
 
 function openChat(chatId, type = 'private') {
-    currentChatPartner = chatId;
-    currentChatType = type;
-    currentChatId = type === 'private' ? [currentUser.id, chatId].sort().join('_') : chatId;
-    socket.emit('join_chat', currentChatId);
-    const user = allUsers.find(u => u.id === chatId);
-    const group = allGroups.find(g => g.id === chatId);
-    const displayName = group ? group.name : `${user?.name} ${user?.surname || ''}`;
-    const avatarColor = group ? group.avatarColor : user?.avatarColor;
-    const avatarImage = group ? null : user?.avatarImage;
-    document.getElementById('headerName').innerText = displayName;
-    let avatarContent = chatId[1].toUpperCase();
-    if (avatarImage) avatarContent = `<img src="${avatarImage}" alt="">`;
-    document.getElementById('headerAvatar').innerHTML = avatarContent;
-    document.getElementById('headerAvatar').style.background = avatarColor || '#667eea';
-    fetch(`/api/messages/${currentChatId}`).then(r=>r.json()).then(msgs => {
-        renderMessages(msgs);
-    });
-    document.querySelectorAll('.chat-item').forEach(el => el.classList.remove('active'));
-    if (window.innerWidth <= 768) {
-        document.getElementById('sidebar').classList.add('hidden-mobile');
-        document.getElementById('mainChat').classList.add('active');
-    }
+currentChatPartner = chatId;
+currentChatType = type;
+currentChatId = type === 'private' ? [currentUser.id, chatId].sort().join('_') : chatId;
+socket.emit('join_chat', currentChatId);
+const user = allUsers.find(u => u.id === chatId);
+const group = allGroups.find(g => g.id === chatId);
+const displayName = group ? group.name : `${user?.name} ${user?.surname || ''}`;
+const avatarColor = group ? group.avatarColor : user?.avatarColor;
+const avatarImage = group ? null : user?.avatarImage;
+const headerName = document.getElementById('headerName');
+const headerStatus = document.getElementById('headerStatus');
+const headerAvatar = document.getElementById('headerAvatar');
+if (headerName) headerName.innerText = displayName;
+if (headerStatus) {
+headerStatus.innerText = user?.online ? 'в сети' : '';
+headerStatus.className = 'chat-status ' + (user?.online ? 'online' : '');
+}
+let avatarContent = chatId[1].toUpperCase();
+if (avatarImage) avatarContent = `<img src="${avatarImage}" alt="">`;
+if (headerAvatar) {
+headerAvatar.innerHTML = avatarContent;
+headerAvatar.style.background = avatarColor || '#667eea';
+}
+fetch(`/api/messages/${currentChatId}`).then(r=>r.json()).then(msgs => {
+renderMessages(msgs);
+});
+document.querySelectorAll('.chat-item').forEach(el => el.classList.remove('active'));
+if (window.innerWidth <= 768) {
+const sidebar = document.getElementById('sidebar');
+const mainChat = document.getElementById('mainChat');
+if (sidebar) sidebar.classList.add('hidden-mobile');
+if (mainChat) mainChat.classList.add('active');
+}
+cancelReply();
 }
 
 function showChatList() {
-    document.getElementById('sidebar').classList.remove('hidden-mobile');
-    document.getElementById('mainChat').classList.remove('active');
+const sidebar = document.getElementById('sidebar');
+const mainChat = document.getElementById('mainChat');
+if (sidebar) sidebar.classList.remove('hidden-mobile');
+if (mainChat) mainChat.classList.remove('active');
 }
 
+// === РЕНДЕРИНГ СООБЩЕНИЙ - ИСПРАВЛЕНО ===
 function renderMessages(messages) {
-    const area = document.getElementById('messagesArea');
-    area.innerHTML = '';
-    messages.forEach((msg, index) => {
-        const div = document.createElement('div');
-        div.className = `message ${msg.from === currentUser.id ? 'me' : 'other'} animate-fade`;
-        let content = '';
-        let senderInfo = '';
-        if (currentChatType !== 'private' && msg.from !== currentUser.id) {
-            const sender = allUsers.find(u => u.id === msg.from);
-            senderInfo = `<div class="sender-name">${sender ? sender.name : msg.from}</div>`;
-        }
-        if (msg.deleted) content = `<i>${msg.text}</i>`;
-        else if (msg.type === 'sticker') content = `<div style="font-size:48px;">${msg.text}</div>`;
-        else if (msg.type === 'image') content = `<img src="${msg.text}" alt="image">`;
-        else if (msg.type === 'video') content = `<video src="${msg.text}" controls></video>`;
-        else if (msg.type === 'audio') content = `<audio src="${msg.text}" controls></audio>`;
-        else if (msg.type === 'file') content = `<div class="message-file">📎 ${msg.fileName}<br><a href="${msg.text}" download style="color:inherit">Скачать</a></div>`;
-        else content = msg.text;
-        let replyInfo = msg.replyTo ? `<div class="message-reply">${msg.replyTo}</div>` : '';
-        div.innerHTML = `${senderInfo}${replyInfo}${content}<div class="message-time">${msg.time}</div>`;
-        if (!msg.deleted) {
-            const actions = document.createElement('div');
-            actions.className = 'message-actions';
-            const replyBtn = document.createElement('button');
-            replyBtn.textContent = '↩️';
-            replyBtn.onclick = () => replyToMessageFunc(index, msg);
-            actions.appendChild(replyBtn);
-            const forwardBtn = document.createElement('button');
-            forwardBtn.textContent = '➡️';
-            forwardBtn.onclick = () => forwardMessageFunc(index, msg);
-            actions.appendChild(forwardBtn);
-            const deleteBtn = document.createElement('button');
-            deleteBtn.textContent = '🗑️';
-            deleteBtn.className = 'delete-btn';
-            deleteBtn.onclick = () => deleteMessage(index);
-            actions.appendChild(deleteBtn);
-            div.appendChild(actions);
-        }
-        area.appendChild(div);
-    });
-    area.scrollTop = area.scrollHeight;
+const area = document.getElementById('messagesArea');
+if (!area) return;
+try {
+area.innerHTML = '';
+} catch (e) {
+console.log('Error clearing messages:', e);
+return;
+}
+messages.forEach((msg, index) => {
+const div = document.createElement('div');
+div.className = `message ${msg.from === currentUser.id ? 'me' : 'other'} animate-fade`;
+let content = '';
+let senderInfo = '';
+if (currentChatType !== 'private' && msg.from !== currentUser.id) {
+const sender = allUsers.find(u => u.id === msg.from);
+senderInfo = `<div class="sender-name">${sender ? sender.name : msg.from}</div>`;
+}
+if (msg.deleted) content = `<i>${msg.text}</i>`;
+else if (msg.type === 'sticker') content = `<div style="font-size:48px;">${msg.text}</div>`;
+else if (msg.type === 'image') content = `<img src="${msg.text}" alt="image">`;
+else if (msg.type === 'video') content = `<video src="${msg.text}" controls></video>`;
+else if (msg.type === 'audio' || msg.type === 'voice') content = renderVoiceMessage(msg.text, msg.duration || '0:00');
+else if (msg.type === 'file') content = `<div class="message-file">📎 ${msg.fileName || 'Файл'}<br><a href="${msg.text}" download style="color:inherit">Скачать</a></div>`;
+else content = msg.text || '';
+let replyInfo = msg.replyTo ? `<div class="message-reply">${msg.replyTo}</div>` : '';
+div.innerHTML = `${senderInfo}${replyInfo}${content}<div class="message-time">${msg.time}</div>`;
+if (!msg.deleted) {
+const actions = document.createElement('div');
+actions.className = 'message-actions';
+const replyBtn = document.createElement('button');
+replyBtn.textContent = '↩️';
+replyBtn.onclick = () => replyToMsgFunc(index, msg);
+actions.appendChild(replyBtn);
+const forwardBtn = document.createElement('button');
+forwardBtn.textContent = '➡️';
+forwardBtn.onclick = () => forwardMsgFunc(index, msg);
+actions.appendChild(forwardBtn);
+const deleteBtn = document.createElement('button');
+deleteBtn.textContent = '🗑️';
+deleteBtn.className = 'delete-btn';
+deleteBtn.onclick = () => deleteMessage(index);
+actions.appendChild(deleteBtn);
+div.appendChild(actions);
+}
+area.appendChild(div);
+});
+area.scrollTop = area.scrollHeight;
 }
 
 function sendMessage() {
-    const input = document.getElementById('messageInput');
-    const text = input.value.trim();
-    if (!text || !currentChatId) return;
-    const msg = {
-        chatId: currentChatId,
-        message: {
-            text: text,
-            from: currentUser.id,
-            time: new Date().toLocaleTimeString(),
-            type: 'text',
-            replyTo: replyToMessage ? `Ответ на сообщение` : null
-        },
-        sender: currentUser.id
-    };
-    socket.emit('send_message', msg);
-    input.value = '';
-    cancelReply();
+const input = document.getElementById('messageInput');
+const text = input.value.trim();
+if (!text || !currentChatId) return;
+const msg = {
+chatId: currentChatId,
+message: {
+text: text,
+from: currentUser.id,
+time: new Date().toLocaleTimeString(),
+type: 'text',
+replyTo: replyToMsg ? `Ответ на сообщение` : null
+},
+sender: currentUser.id
+};
+socket.emit('send_message', msg);
+input.value = '';
+cancelReply();
 }
 
 function sendSticker(sticker) {
-    if (!currentChatId) return;
-    const msg = { chatId: currentChatId, message: { text: sticker, from: currentUser.id, time: new Date().toLocaleTimeString(), type: 'sticker' }, sender: currentUser.id };
-    socket.emit('send_message', msg);
-    document.getElementById('stickersPanel').classList.add('hidden');
+if (!currentChatId) return;
+const msg = { chatId: currentChatId, message: { text: sticker, from: currentUser.id, time: new Date().toLocaleTimeString(), type: 'sticker' }, sender: currentUser.id };
+socket.emit('send_message', msg);
+const panel = document.getElementById('stickersPanel');
+if (panel) panel.classList.add('hidden');
 }
 
 async function deleteMessage(index) {
-    if (!confirm('Удалить сообщение?')) return;
-    await fetch(`/api/messages/${currentChatId}/${index}?userId=${currentUser.id}`, { method: 'DELETE' });
-    socket.emit('delete_message', { chatId: currentChatId, index, userId: currentUser.id });
+if (!confirm('Удалить сообщение?')) return;
+await fetch(`/api/messages/${currentChatId}/${index}?userId=${currentUser.id}`, { method: 'DELETE' });
+socket.emit('delete_message', { chatId: currentChatId, index, userId: currentUser.id });
 }
 
 function handleKeyPress(e) { if (e.key === 'Enter') sendMessage(); }
-function sendTyping() { if (currentChatId) socket.emit('typing', { chatId: currentChatId, userId: currentUser.id }); }
+
+// === TYPING - ИСПРАВЛЕНО ===
+function sendTyping() {
+if (currentChatId && currentUser) {
+socket.emit('typing', { chatId: currentChatId, userId: currentUser.id });
+// Очищаем предыдущий таймер
+if (typingTimeout) clearTimeout(typingTimeout);
+// Устанавливаем новый таймер
+typingTimeout = setTimeout(() => {
+socket.emit('stop_typing', { chatId: currentChatId, userId: currentUser.id });
+}, 2000);
+}
+}
 
 async function uploadFile() {
-    const file = document.getElementById('fileInput').files[0];
-    if (!file || !currentChatId) return;
-    const formData = new FormData();
-    formData.append('file', file);
-    const res = await fetch('/api/upload', { method: 'POST', body: formData });
-    const data = await res.json();
-    let type = 'file';
-    if (file.type.startsWith('image/')) type = 'image';
-    else if (file.type.startsWith('video/')) type = 'video';
-    const msg = { chatId: currentChatId, message: { text: data.url, fileName: data.name, from: currentUser.id, time: new Date().toLocaleTimeString(), type }, sender: currentUser.id };
-    socket.emit('send_message', msg);
-    document.getElementById('fileInput').value = '';
+const file = document.getElementById('fileInput').files[0];
+if (!file || !currentChatId) return;
+const formData = new FormData();
+formData.append('file', file);
+const res = await fetch('/api/upload', { method: 'POST', body: formData });
+const data = await res.json();
+let type = 'file';
+if (file.type.startsWith('image/')) type = 'image';
+else if (file.type.startsWith('video/')) type = 'video';
+const msg = { chatId: currentChatId, message: { text: data.url, fileName: data.name, from: currentUser.id, time: new Date().toLocaleTimeString(), type }, sender: currentUser.id };
+socket.emit('send_message', msg);
+const fileInput = document.getElementById('fileInput');
+if (fileInput) fileInput.value = '';
 }
 
 function startRecording() {
-    recordPressTimer = setTimeout(() => recordMedia(), 300);
+recordPressTimer = setTimeout(() => recordMedia(), 300);
 }
 
 function stopRecording() {
-    clearTimeout(recordPressTimer);
-    if (isRecording) stopMediaRecording();
+clearTimeout(recordPressTimer);
+if (isRecording) stopMediaRecording();
 }
 
 async function recordMedia() {
-    isRecording = true;
-    mediaChunks = [];
-    recordingSeconds = 0;
-    try {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
-        mediaRecorder.ondataavailable = (e) => { if (e.data.size > 0) mediaChunks.push(e.data); };
-        mediaRecorder.onstop = async () => {
-            if (mediaChunks.length === 0) return;
-            const blob = new Blob(mediaChunks, { type: 'audio/webm' });
-            const formData = new FormData();
-            formData.append('file', blob, 'voice.webm');
-            const res = await fetch('/api/upload', { method: 'POST', body: formData });
-            const data = await res.json();
-            const mins = Math.floor(recordingSeconds / 60);
-            const secs = recordingSeconds % 60;
-            const duration = `${mins}:${secs.toString().padStart(2, '0')}`;
-            const msg = {
-                chatId: currentChatId,
-                message: {
-                    text: data.url,
-                    from: currentUser.id,
-                    time: new Date().toLocaleTimeString(),
-                    type: 'voice',
-                    duration: duration
-                },
-                sender: currentUser.id
-            };
-            socket.emit('send_message', msg);
-            stream.getTracks().forEach(track => track.stop());
-        };
-        mediaRecorder.start();
-        document.getElementById('recordBtn').classList.add('recording');
-        const btn = document.getElementById('recordBtn');
-        const timer = document.createElement('div');
-        timer.className = 'recording-timer';
-        timer.id = 'recordingTimer';
-        timer.textContent = '0:00';
-        btn.parentElement.appendChild(timer);
-        recordingTimer = setInterval(() => {
-            recordingSeconds++;
-            const mins = Math.floor(recordingSeconds / 60);
-            const secs = recordingSeconds % 60;
-            timer.textContent = `${mins}:${secs.toString().padStart(2, '0')}`;
-            if (recordingSeconds >= 60) stopMediaRecording();
-        }, 1000);
-    } catch (e) {
-        alert('Нет доступа к микрофону');
-        isRecording = false;
-    }
+isRecording = true;
+mediaChunks = [];
+recordingSeconds = 0;
+try {
+const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
+mediaRecorder.ondataavailable = (e) => { if (e.data.size > 0) mediaChunks.push(e.data); };
+mediaRecorder.onstop = async () => {
+if (mediaChunks.length === 0) return;
+const blob = new Blob(mediaChunks, { type: 'audio/webm' });
+const formData = new FormData();
+formData.append('file', blob, 'voice.webm');
+const res = await fetch('/api/upload', { method: 'POST', body: formData });
+const data = await res.json();
+const mins = Math.floor(recordingSeconds / 60);
+const secs = recordingSeconds % 60;
+const duration = `${mins}:${secs.toString().padStart(2, '0')}`;
+const msg = {
+chatId: currentChatId,
+message: {
+text: data.url,
+from: currentUser.id,
+time: new Date().toLocaleTimeString(),
+type: 'voice',
+duration: duration
+},
+sender: currentUser.id
+};
+socket.emit('send_message', msg);
+stream.getTracks().forEach(track => track.stop());
+};
+mediaRecorder.start();
+const recordBtn = document.getElementById('recordBtn');
+if (recordBtn) recordBtn.classList.add('recording');
+const btn = document.getElementById('recordBtn');
+const timer = document.createElement('div');
+timer.className = 'recording-timer';
+timer.id = 'recordingTimer';
+timer.textContent = '0:00';
+if (btn && btn.parentElement) btn.parentElement.appendChild(timer);
+recordingTimer = setInterval(() => {
+recordingSeconds++;
+const mins = Math.floor(recordingSeconds / 60);
+const secs = recordingSeconds % 60;
+timer.textContent = `${mins}:${secs.toString().padStart(2, '0')}`;
+if (recordingSeconds >= 60) stopMediaRecording();
+}, 1000);
+} catch (e) {
+alert('Нет доступа к микрофону');
+isRecording = false;
+}
 }
 
 function stopMediaRecording() {
-    if (mediaRecorder && isRecording) {
-        mediaRecorder.stop();
-        isRecording = false;
-        document.getElementById('recordBtn').classList.remove('recording');
-        const timer = document.getElementById('recordingTimer');
-        if (timer) timer.remove();
-        if (recordingTimer) { clearInterval(recordingTimer); recordingTimer = null; }
-    }
+if (mediaRecorder && isRecording) {
+mediaRecorder.stop();
+isRecording = false;
+const recordBtn = document.getElementById('recordBtn');
+if (recordBtn) recordBtn.classList.remove('recording');
+const timer = document.getElementById('recordingTimer');
+if (timer && timer.parentNode) {
+try {
+timer.parentNode.removeChild(timer);
+} catch (e) {
+console.log('Timer already removed:', e);
+}
+}
+if (recordingTimer) { 
+clearInterval(recordingTimer); 
+recordingTimer = null; 
+}
+}
 }
 
-function replyToMessageFunc(index, msg) {
-    replyToMessage = { index, text: msg.text ? msg.text.substring(0, 50) : 'Голосовое' };
-    document.getElementById('replyPreviewText').textContent = `Ответ: ${msg.text ? msg.text.substring(0, 50) : 'Голосовое'}...`;
-    document.getElementById('replyPreview').classList.remove('hidden');
-    document.getElementById('messageInput').focus();
+// === ВОСПРОИЗВЕДЕНИЕ ГОЛОСОВОГО ===
+function playVoice(url, btn) {
+const audio = new Audio(url);
+audio.play();
+btn.textContent = '⏸';
+btn.classList.add('playing');
+const waveform = btn.parentElement.querySelector('.voice-waveform');
+if (waveform) {
+waveform.querySelectorAll('.waveform-bar').forEach(bar => {
+bar.style.animationPlayState = 'running';
+});
+}
+audio.onended = () => {
+btn.textContent = '▶';
+btn.classList.remove('playing');
+if (waveform) {
+waveform.querySelectorAll('.waveform-bar').forEach(bar => {
+bar.style.animationPlayState = 'paused';
+});
+}
+};
+btn.onclick = () => {
+if (audio.paused) {
+audio.play();
+btn.textContent = '⏸';
+btn.classList.add('playing');
+if (waveform) {
+waveform.querySelectorAll('.waveform-bar').forEach(bar => {
+bar.style.animationPlayState = 'running';
+});
+}
+} else {
+audio.pause();
+btn.textContent = '▶';
+btn.classList.remove('playing');
+if (waveform) {
+waveform.querySelectorAll('.waveform-bar').forEach(bar => {
+bar.style.animationPlayState = 'paused';
+});
+}
+}
+};
+}
+
+function replyToMsgFunc(index, msg) {
+replyToMsg = { index, text: msg.text ? msg.text.substring(0, 50) : 'Голосовое' };
+const previewText = document.getElementById('replyPreviewText');
+const replyPreview = document.getElementById('replyPreview');
+if (previewText) previewText.textContent = `Ответ: ${msg.text ? msg.text.substring(0, 50) : 'Голосовое'}...`;
+if (replyPreview) replyPreview.classList.remove('hidden');
+const messageInput = document.getElementById('messageInput');
+if (messageInput) messageInput.focus();
 }
 
 function cancelReply() {
-    replyToMessage = null;
-    document.getElementById('replyPreview').classList.add('hidden');
+replyToMsg = null;
+const replyPreview = document.getElementById('replyPreview');
+if (replyPreview) replyPreview.classList.add('hidden');
 }
 
-function forwardMessageFunc(index, msg) {
-    forwardMessage = { index, msg };
-    showForwardPanel();
+function forwardMsgFunc(index, msg) {
+forwardMsg = { index, msg };
+showForwardPanel();
 }
 
 function showForwardPanel() {
-    const panel = document.getElementById('forwardPanel');
-    panel.innerHTML = '';
-    friends.forEach(f => {
-        const item = document.createElement('div');
-        item.className = 'forward-item';
-        item.innerHTML = `<div class="avatar" style="width:35px;height:35px;font-size:14px;background:${f.avatarColor}">${f.id[1].toUpperCase()}</div><span>${f.name}</span>`;
-        item.onclick = () => executeForward(f.id);
-        panel.appendChild(item);
-    });
-    panel.classList.remove('hidden');
+const panel = document.getElementById('forwardPanel');
+if (!panel) return;
+panel.innerHTML = '';
+friends.forEach(f => {
+const item = document.createElement('div');
+item.className = 'forward-item';
+item.innerHTML = `<div class="avatar" style="width:35px;height:35px;font-size:14px;background:${f.avatarColor}">${f.id[1].toUpperCase()}</div><span>${f.name}</span>`;
+item.onclick = () => executeForward(f.id);
+panel.appendChild(item);
+});
+panel.classList.remove('hidden');
 }
 
 async function executeForward(targetId) {
-    if (!forwardMessage) return;
-    const targetChatId = [currentUser.id, targetId].sort().join('_');
-    const msg = {
-        chatId: targetChatId,
-        message: {
-            text: 'Пересланное сообщение',
-            from: currentUser.id,
-            time: new Date().toLocaleTimeString(),
-            type: 'text'
-        },
-        sender: currentUser.id
-    };
-    socket.emit('send_message', msg);
-    document.getElementById('forwardPanel').classList.add('hidden');
-    forwardMessage = null;
+if (!forwardMsg) return;
+const targetChatId = [currentUser.id, targetId].sort().join('_');
+const msg = {
+chatId: targetChatId,
+message: {
+text: 'Пересланное сообщение',
+from: currentUser.id,
+time: new Date().toLocaleTimeString(),
+type: 'text'
+},
+sender: currentUser.id
+};
+socket.emit('send_message', msg);
+const panel = document.getElementById('forwardPanel');
+if (panel) panel.classList.add('hidden');
+forwardMsg = null;
 }
 
+// === НАСТРОЙКИ ===
 function toggleMyProfile() {
-    document.getElementById('myProfileSidebar').classList.toggle('hidden');
-    document.getElementById('settingsMenu').classList.add('hidden');
+const sidebar = document.getElementById('myProfileSidebar');
+const menu = document.getElementById('settingsMenu');
+if (sidebar) sidebar.classList.toggle('hidden');
+if (menu) menu.classList.add('hidden');
 }
 
 function toggleSettings() {
-    document.getElementById('settingsMenu').classList.toggle('hidden');
-    document.getElementById('myProfileSidebar').classList.add('hidden');
+const menu = document.getElementById('settingsMenu');
+const sidebar = document.getElementById('myProfileSidebar');
+if (menu) menu.classList.toggle('hidden');
+if (sidebar) sidebar.classList.add('hidden');
 }
 
 function toggleTheme() {
-    isDark = !isDark;
-    document.documentElement.setAttribute('data-theme', isDark ? 'dark' : 'light');
-    localStorage.setItem('theme', isDark ? 'dark' : 'light');
-    toggleSettings();
+isDark = !isDark;
+document.documentElement.setAttribute('data-theme', isDark ? 'dark' : 'light');
+localStorage.setItem('theme', isDark ? 'dark' : 'light');
+toggleSettings();
 }
 
 function toggleStickers() {
-    document.getElementById('stickersPanel').classList.toggle('hidden');
-    document.getElementById('emojiPicker').classList.add('hidden');
-    document.getElementById('forwardPanel').classList.add('hidden');
+const stickersPanel = document.getElementById('stickersPanel');
+const emojiPicker = document.getElementById('emojiPicker');
+const forwardPanel = document.getElementById('forwardPanel');
+if (stickersPanel) stickersPanel.classList.toggle('hidden');
+if (emojiPicker) emojiPicker.classList.add('hidden');
+if (forwardPanel) forwardPanel.classList.add('hidden');
 }
 
 function toggleEmoji() {
-    document.getElementById('emojiPicker').classList.toggle('hidden');
-    document.getElementById('stickersPanel').classList.add('hidden');
-    document.getElementById('forwardPanel').classList.add('hidden');
+const emojiPicker = document.getElementById('emojiPicker');
+const stickersPanel = document.getElementById('stickersPanel');
+const forwardPanel = document.getElementById('forwardPanel');
+if (emojiPicker) emojiPicker.classList.toggle('hidden');
+if (stickersPanel) stickersPanel.classList.add('hidden');
+if (forwardPanel) forwardPanel.classList.add('hidden');
 }
 
-function insertEmoji(e) { document.getElementById('messageInput').value += e; }
-function closeModal(id) { document.getElementById(id).classList.add('hidden'); }
+function insertEmoji(e) { 
+const input = document.getElementById('messageInput');
+if (input) input.value += e; 
+}
+
+function closeModal(id) { 
+const modal = document.getElementById(id);
+if (modal) modal.classList.add('hidden'); 
+}
 
 function openProfileSettings() {
-    document.getElementById('profileId').value = currentUser.id;
-    document.getElementById('profileName').value = currentUser.name;
-    document.getElementById('profileSurname').value = currentUser.surname || '';
-    document.getElementById('profileColor').value = currentUser.avatarColor || '#007aff';
-    document.getElementById('profileBio').value = currentUser.bio || '';
-    document.getElementById('profileModal').classList.remove('hidden');
-    document.getElementById('myProfileSidebar').classList.add('hidden');
+const profileId = document.getElementById('profileId');
+const profileName = document.getElementById('profileName');
+const profileSurname = document.getElementById('profileSurname');
+const profileColor = document.getElementById('profileColor');
+const profileBio = document.getElementById('profileBio');
+const profileModal = document.getElementById('profileModal');
+const myProfileSidebar = document.getElementById('myProfileSidebar');
+if (profileId) profileId.value = currentUser.id;
+if (profileName) profileName.value = currentUser.name;
+if (profileSurname) profileSurname.value = currentUser.surname || '';
+if (profileColor) profileColor.value = currentUser.avatarColor || '#007aff';
+if (profileBio) profileBio.value = currentUser.bio || '';
+if (profileModal) profileModal.classList.remove('hidden');
+if (myProfileSidebar) myProfileSidebar.classList.add('hidden');
 }
 
 async function saveProfile() {
-    const avatarFile = document.getElementById('profileAvatar').files[0];
-    let avatarUrl = currentUser.avatarImage;
-    if (avatarFile) {
-        const formData = new FormData();
-        formData.append('file', avatarFile);
-        const res = await fetch('/api/upload', { method: 'POST', body: formData });
-        const data = await res.json();
-        avatarUrl = data.url;
-    }
-    const newData = {
-        id: document.getElementById('profileId').value,
-        name: document.getElementById('profileName').value,
-        surname: document.getElementById('profileSurname').value,
-        avatarColor: document.getElementById('profileColor').value,
-        avatarImage: avatarUrl,
-        bio: document.getElementById('profileBio').value,
-        password: currentUser.password
-    };
-    const res = await fetch('/api/register', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(newData) });
-    const data = await res.json();
-    if (data.success) {
-        currentUser = data.user;
-        localStorage.setItem('mm_user', JSON.stringify(currentUser));
-        updateMyProfile();
-        alert('Профиль сохранён!');
-        closeModal('profileModal');
-        loadUsers();
-        loadChats();
-    }
+const avatarFile = document.getElementById('profileAvatar').files[0];
+let avatarUrl = currentUser.avatarImage;
+if (avatarFile) {
+const formData = new FormData();
+formData.append('file', avatarFile);
+const res = await fetch('/api/upload', { method: 'POST', body: formData });
+const data = await res.json();
+avatarUrl = data.url;
+}
+const newData = {
+id: document.getElementById('profileId').value,
+name: document.getElementById('profileName').value,
+surname: document.getElementById('profileSurname').value,
+avatarColor: document.getElementById('profileColor').value,
+avatarImage: avatarUrl,
+bio: document.getElementById('profileBio').value,
+password: currentUser.password
+};
+const res = await fetch('/api/register', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(newData) });
+const data = await res.json();
+if (data.success) {
+currentUser = data.user;
+localStorage.setItem('telepam_user', JSON.stringify(currentUser));
+updateMyProfile();
+alert('Профиль сохранён!');
+closeModal('profileModal');
+loadUsers();
+loadChats();
+}
 }
 
 async function openPrivacySettings() {
-    const res = await fetch(`/api/settings/${currentUser.id}`);
-    const settings = await res.json();
-    document.getElementById('privacyLevel').value = settings.privacy?.whoCanMessage || 'all';
-    document.getElementById('privacyBio').value = settings.privacy?.showBio ? 'true' : 'false';
-    document.getElementById('privacyNotifications').value = settings.notifications ? 'true' : 'false';
-    document.getElementById('privacySound').value = settings.sound ? 'true' : 'false';
-    const blockList = document.getElementById('blockList');
-    blockList.innerHTML = '';
-    settings.blocked?.forEach(id => {
-        blockList.innerHTML += `<div class="member-option" style="justify-content:space-between;"><span>${id}</span><button class="btn-danger" style="padding:5px 10px;border-radius:5px;border:none;color:white;cursor:pointer;" onclick="unblockUser('${id}')">Разблокировать</button></div>`;
-    });
-    document.getElementById('privacyModal').classList.remove('hidden');
-    document.getElementById('myProfileSidebar').classList.add('hidden');
+const res = await fetch(`/api/settings/${currentUser.id}`);
+const settings = await res.json();
+const privacyLevel = document.getElementById('privacyLevel');
+const privacyBio = document.getElementById('privacyBio');
+const privacyNotifications = document.getElementById('privacyNotifications');
+const privacySound = document.getElementById('privacySound');
+const blockList = document.getElementById('blockList');
+const privacyModal = document.getElementById('privacyModal');
+const myProfileSidebar = document.getElementById('myProfileSidebar');
+if (privacyLevel) privacyLevel.value = settings.privacy?.whoCanMessage || 'all';
+if (privacyBio) privacyBio.value = settings.privacy?.showBio ? 'true' : 'false';
+if (privacyNotifications) privacyNotifications.value = settings.notifications ? 'true' : 'false';
+if (privacySound) privacySound.value = settings.sound ? 'true' : 'false';
+if (blockList) {
+blockList.innerHTML = '';
+settings.blocked?.forEach(id => {
+blockList.innerHTML += `<div class="member-option" style="justify-content:space-between;"><span>${id}</span><button class="btn-danger" style="padding:5px 10px;border-radius:5px;border:none;color:white;cursor:pointer;" onclick="unblockUser('${id}')">Разблокировать</button></div>`;
+});
+}
+if (privacyModal) privacyModal.classList.remove('hidden');
+if (myProfileSidebar) myProfileSidebar.classList.add('hidden');
 }
 
 async function unblockUser(id) {
-    await fetch(`/api/block/${currentUser.id}/${id}`, { method: 'DELETE' });
-    openPrivacySettings();
+await fetch(`/api/block/${currentUser.id}/${id}`, { method: 'DELETE' });
+openPrivacySettings();
 }
 
 async function savePrivacy() {
-    const settings = {
-        privacy: {
-            whoCanMessage: document.getElementById('privacyLevel').value,
-            showBio: document.getElementById('privacyBio').value === 'true',
-            showChannels: document.getElementById('privacyChannels')?.value === 'true'
-        },
-        notifications: document.getElementById('privacyNotifications').value === 'true',
-        sound: document.getElementById('privacySound').value === 'true'
-    };
-    await fetch(`/api/settings/${currentUser.id}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(settings) });
-    userSettings.sound = settings.sound;
-    alert('Настройки приватности сохранены!');
-    closeModal('privacyModal');
+const settings = {
+privacy: {
+whoCanMessage: document.getElementById('privacyLevel').value,
+showBio: document.getElementById('privacyBio').value === 'true',
+showChannels: document.getElementById('privacyChannels')?.value === 'true'
+},
+notifications: document.getElementById('privacyNotifications').value === 'true',
+sound: document.getElementById('privacySound').value === 'true'
+};
+await fetch(`/api/settings/${currentUser.id}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(settings) });
+userSettings.sound = settings.sound;
+alert('Настройки приватности сохранены!');
+closeModal('privacyModal');
 }
 
 function openThemeSettings() {
-    document.getElementById('themeModal').classList.remove('hidden');
-    document.getElementById('myProfileSidebar').classList.add('hidden');
+const themeModal = document.getElementById('themeModal');
+const myProfileSidebar = document.getElementById('myProfileSidebar');
+if (themeModal) themeModal.classList.remove('hidden');
+if (myProfileSidebar) myProfileSidebar.classList.add('hidden');
 }
 
 function setAccentColor(color, elem) {
-    document.querySelectorAll('.theme-color').forEach(el => el.classList.remove('active'));
-    elem.classList.add('active');
-    userSettings.accentColor = color;
-    document.documentElement.style.setProperty('--accent', color);
+document.querySelectorAll('.theme-color').forEach(el => el.classList.remove('active'));
+elem.classList.add('active');
+userSettings.accentColor = color;
+document.documentElement.style.setProperty('--accent', color);
 }
 
 async function saveTheme() {
-    userSettings.animationSpeed = document.getElementById('animationSpeed').value;
-    document.documentElement.style.setProperty('--animation-speed', userSettings.animationSpeed);
-    localStorage.setItem('mm_settings_' + currentUser.id, JSON.stringify(userSettings));
-    alert('Тема сохранена!');
-    closeModal('themeModal');
+userSettings.animationSpeed = document.getElementById('animationSpeed').value;
+document.documentElement.style.setProperty('--animation-speed', userSettings.animationSpeed);
+localStorage.setItem('telepam_settings', JSON.stringify(userSettings));
+alert('Тема сохранена!');
+closeModal('themeModal');
 }
 
 function openCreateGroup() { openGroupModal('group'); }
 function openCreateChannel() { openGroupModal('channel'); }
 
 async function openGroupModal(type) {
-    document.getElementById('groupModalTitle').innerText = type === 'group' ? 'Создать группу' : 'Создать канал';
-    document.getElementById('groupModal').classList.remove('hidden');
-    toggleSettings();
-    const memberSelect = document.getElementById('memberSelect');
-    memberSelect.innerHTML = '';
-    friends.forEach(f => {
-        memberSelect.innerHTML += `
-        <div class="member-option" onclick="this.classList.toggle('selected'); if(selectedMembers.includes('${f.id}')){selectedMembers=selectedMembers.filter(x=>x!=='${f.id}')}else{selectedMembers.push('${f.id}')}">
-        <div class="avatar" style="width:35px;height:35px;background:${f.avatarColor}">${f.id[1].toUpperCase()}</div>
-        <span>${f.name} ${f.surname}</span>
-        </div>
-        `;
-    });
-    selectedMembers = [];
+const groupModalTitle = document.getElementById('groupModalTitle');
+const groupModal = document.getElementById('groupModal');
+if (groupModalTitle) groupModalTitle.innerText = type === 'group' ? 'Создать группу' : 'Создать канал';
+if (groupModal) groupModal.classList.remove('hidden');
+toggleSettings();
+const memberSelect = document.getElementById('memberSelect');
+if (memberSelect) {
+memberSelect.innerHTML = '';
+friends.forEach(f => {
+memberSelect.innerHTML += `
+<div class="member-option" onclick="this.classList.toggle('selected'); if(selectedMembers.includes('${f.id}')){selectedMembers=selectedMembers.filter(x=>x!=='${f.id}')}else{selectedMembers.push('${f.id}')}">
+<div class="avatar" style="width:35px;height:35px;background:${f.avatarColor}">${f.id[1].toUpperCase()}</div>
+<span>${f.name} ${f.surname}</span>
+</div>
+`;
+});
+}
+selectedMembers = [];
 }
 
 async function createGroup() {
-    const name = document.getElementById('groupName').value;
-    const desc = document.getElementById('groupDesc').value;
-    const color = document.getElementById('groupColor').value;
-    const type = document.getElementById('groupModalTitle').innerText.includes('канал') ? 'channel' : 'group';
-    if (!name) { alert('Введите название'); return; }
-    const res = await fetch('/api/groups', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, description: desc, members: selectedMembers, creatorId: currentUser.id, avatarColor: color, type })
-    });
-    const data = await res.json();
-    if (data.success) {
-        alert('Создано!');
-        closeModal('groupModal');
-        loadGroups();
-        loadChats();
-    }
+const name = document.getElementById('groupName').value;
+const desc = document.getElementById('groupDesc').value;
+const color = document.getElementById('groupColor').value;
+const groupModalTitle = document.getElementById('groupModalTitle');
+const type = groupModalTitle?.innerText.includes('канал') ? 'channel' : 'group';
+if (!name) { alert('Введите название'); return; }
+const res = await fetch('/api/groups', {
+method: 'POST',
+headers: { 'Content-Type': 'application/json' },
+body: JSON.stringify({ name, description: desc, members: selectedMembers, creatorId: currentUser.id, avatarColor: color, type })
+});
+const data = await res.json();
+if (data.success) {
+alert('Создано!');
+closeModal('groupModal');
+loadGroups();
+loadChats();
+}
 }
 
 function logout() {
-    localStorage.removeItem('mm_user');
-    location.reload();
+localStorage.removeItem('telepam_user');
+location.reload();
 }
 
 async function loadFolders() {
-    const res = await fetch(`/api/folders/${currentUser.id}`);
-    folders = await res.json();
-    const bar = document.getElementById('foldersBar');
-    bar.innerHTML = '';
-    folders.forEach(f => {
-        const tab = document.createElement('div');
-        tab.className = `folder-tab ${currentFolder === f.id ? 'active' : ''}`;
-        tab.textContent = `${f.icon} ${f.name}`;
-        tab.onclick = () => { currentFolder = f.id; loadChats(); };
-        bar.appendChild(tab);
-    });
+const res = await fetch(`/api/folders/${currentUser.id}`);
+folders = await res.json();
+const bar = document.getElementById('foldersBar');
+if (!bar) return;
+bar.innerHTML = '';
+folders.forEach(f => {
+const tab = document.createElement('div');
+tab.className = `folder-tab ${currentFolder === f.id ? 'active' : ''}`;
+tab.textContent = `${f.icon} ${f.name}`;
+tab.onclick = () => { currentFolder = f.id; loadChats(); };
+bar.appendChild(tab);
+});
 }
 
 function openFoldersManager() {
-    const list = document.getElementById('foldersList');
-    list.innerHTML = '';
-    folders.forEach((f, idx) => {
-        if (f.id === 'all') return;
-        list.innerHTML += `
-        <div class="member-option" style="justify-content:space-between;">
-        <span>${f.icon} ${f.name} (${f.chats?.length || 0} чатов)</span>
-        <button class="folder-edit-btn" onclick="deleteFolder(${idx})">🗑️</button>
-        </div>
-        `;
-    });
-    document.getElementById('foldersModal').classList.remove('hidden');
-    toggleSettings();
+const list = document.getElementById('foldersList');
+const foldersModal = document.getElementById('foldersModal');
+if (!list) return;
+list.innerHTML = '';
+folders.forEach((f, idx) => {
+if (f.id === 'all') return;
+list.innerHTML += `
+<div class="member-option" style="justify-content:space-between;">
+<span>${f.icon} ${f.name} (${f.chats?.length || 0} чатов)</span>
+<button class="folder-edit-btn" onclick="deleteFolder(${idx})">🗑️</button>
+</div>
+`;
+});
+if (foldersModal) foldersModal.classList.remove('hidden');
+toggleSettings();
 }
 
 async function createFolder() {
-    const name = document.getElementById('newFolderName').value;
-    const icon = document.getElementById('newFolderIcon').value || '📁';
-    if (!name) return;
-    folders.push({ id: 'folder_' + Date.now(), name, icon, chats: [] });
-    await fetch(`/api/folders/${currentUser.id}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(folders)
-    });
-    loadFolders();
-    openFoldersManager();
+const name = document.getElementById('newFolderName').value;
+const icon = document.getElementById('newFolderIcon').value || '📁';
+if (!name) return;
+folders.push({ id: 'folder_' + Date.now(), name, icon, chats: [] });
+await fetch(`/api/folders/${currentUser.id}`, {
+method: 'POST',
+headers: { 'Content-Type': 'application/json' },
+body: JSON.stringify(folders)
+});
+loadFolders();
+openFoldersManager();
 }
 
 async function deleteFolder(idx) {
-    folders.splice(idx, 1);
-    await fetch(`/api/folders/${currentUser.id}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(folders)
-    });
-    loadFolders();
-    openFoldersManager();
+folders.splice(idx, 1);
+await fetch(`/api/folders/${currentUser.id}`, {
+method: 'POST',
+headers: { 'Content-Type': 'application/json' },
+body: JSON.stringify(folders)
+});
+loadFolders();
+openFoldersManager();
 }
 
 async function viewUserProfile(userId) {
-    if (!userId || userId === currentUser.id) return;
-    const res = await fetch(`/api/user/${userId}`);
-    const user = await res.json();
-    const content = document.getElementById('userProfileContent');
-    let avatarContent = user.id[1].toUpperCase();
-    if (user.avatarImage) avatarContent = `<img src="${user.avatarImage}" alt="">`;
-    content.innerHTML = `
-    <div class="avatar" style="background:${user.avatarColor}">${avatarContent}</div>
-    <h3>${user.name} ${user.surname}</h3>
-    <p>${user.id} ${user.online ? '<span style="color:var(--online)">● в сети</span>' : ''}</p>
-    ${user.bio ? `<div class="bio"><b>О себе:</b><br>${user.bio}</div>` : ''}
-    <div style="margin-top:15px;">
-    <button class="btn-primary" onclick="openChat('${user.id}', 'private'); closeModal('userProfileModal');">Написать</button>
-    </div>
-    `;
-    document.getElementById('userProfileModal').classList.remove('hidden');
+if (!userId || userId === currentUser.id) return;
+const res = await fetch(`/api/user/${userId}`);
+const user = await res.json();
+const content = document.getElementById('userProfileContent');
+const userProfileModal = document.getElementById('userProfileModal');
+let avatarContent = user.id[1].toUpperCase();
+if (user.avatarImage) avatarContent = `<img src="${user.avatarImage}" alt="">`;
+if (content) {
+content.innerHTML = `
+<div class="avatar" style="background:${user.avatarColor}">${avatarContent}</div>
+<h3>${user.name} ${user.surname}</h3>
+<p>${user.id} ${user.online ? '<span style="color:var(--online)">● в сети</span>' : ''}</p>
+${user.bio ? `<div class="bio"><b>О себе:</b><br>${user.bio}</div>` : ''}
+<div style="margin-top:15px;">
+<button class="btn-primary" onclick="openChat('${user.id}', 'private'); closeModal('userProfileModal');">Написать</button>
+</div>
+`;
+}
+if (userProfileModal) userProfileModal.classList.remove('hidden');
 }
 
-// === ИСПРАВЛЕНО: ДОБАВЛЕНА ФУНКЦИЯ loadChatParticipants ===
+// === НАСТРОЙКИ ЧАТА - ИСПРАВЛЕНО ===
 async function openChatSettings() {
-    if (!currentChatPartner) return;
-    document.getElementById('chatSettingsModal').classList.remove('hidden');
-    document.getElementById('chatSettingsTitle').innerText = currentChatType === 'private' ? 'Настройки чата' : 'Настройки группы';
-    await loadChatParticipants();
-    await loadChatMedia();
-}
-
-// === ИСПРАВЛЕНО: ДОБАВЛЕНА ФУНКЦИЯ ===
-async function loadChatParticipants() {
-    const list = document.getElementById('participantsList');
-    if (!list) return;
-    list.innerHTML = '';
-    if (currentChatType === 'private') {
-        const user = allUsers.find(u => u.id === currentChatPartner);
-        if (user) {
-            list.innerHTML += `<div class="member-option"><div class="avatar" style="width:35px;height:35px;background:${user.avatarColor}">${user.id[1].toUpperCase()}</div><span>${user.name} ${user.surname}</span></div>`;
-        }
-    } else {
-        const group = allGroups.find(g => g.id === currentChatPartner);
-        if (group) {
-            group.members.forEach(memberId => {
-                const user = allUsers.find(u => u.id === memberId);
-                if (user) {
-                    list.innerHTML += `<div class="member-option"><div class="avatar" style="width:35px;height:35px;background:${user.avatarColor}">${user.id[1].toUpperCase()}</div><span>${user.name} ${user.surname}</span></div>`;
-                }
-            });
-        }
-    }
+if (!currentChatPartner) return;
+const chatSettingsModal = document.getElementById('chatSettingsModal');
+const chatSettingsTitle = document.getElementById('chatSettingsTitle');
+if (chatSettingsModal) chatSettingsModal.classList.remove('hidden');
+if (chatSettingsTitle) chatSettingsTitle.innerText = currentChatType === 'private' ? 'Настройки чата' : 'Настройки группы';
+await loadChatParticipants();
+await loadChatMedia();
 }
 
 async function switchChatTab(tab) {
-    document.querySelectorAll('.modal-tab').forEach(t => t.classList.remove('active'));
-    document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
-    event.target.classList.add('active');
-    document.getElementById(`tab-${tab}`).classList.add('active');
+document.querySelectorAll('.modal-tab').forEach(t => t.classList.remove('active'));
+document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+if (event.target) event.target.classList.add('active');
+const tabElement = document.getElementById(`tab-${tab}`);
+if (tabElement) tabElement.classList.add('active');
 }
 
+// === ИСПРАВЛЕНО: ЗАГРУЗКА УЧАСТНИКОВ ===
+async function loadChatParticipants() {
+const list = document.getElementById('participantsList');
+if (!list) return;
+list.innerHTML = '';
+if (currentChatType === 'private') {
+const user = allUsers.find(u => u.id === currentChatPartner);
+if (user) {
+list.innerHTML += `<div class="member-option"><div class="avatar" style="width:35px;height:35px;background:${user.avatarColor}">${user.id[1].toUpperCase()}</div><span>${user.name} ${user.surname}</span></div>`;
+}
+} else {
+const group = allGroups.find(g => g.id === currentChatPartner);
+if (group && group.members) {
+for (const memberId of group.members) {
+const user = allUsers.find(u => u.id === memberId);
+if (user) {
+list.innerHTML += `<div class="member-option"><div class="avatar" style="width:35px;height:35px;background:${user.avatarColor}">${user.id[1].toUpperCase()}</div><span>${user.name} ${user.surname}</span></div>`;
+}
+}
+}
+}
+}
+
+// === ИСПРАВЛЕНО: ЗАГРУЗКА МЕДИА ===
 async function loadChatMedia() {
-    const res = await fetch(`/api/chat-media/${currentChatId}`);
-    const media = await res.json();
-    const mediaGrid = document.getElementById('mediaGrid');
-    if (!mediaGrid) return;
-    mediaGrid.innerHTML = '';
-    media.images.forEach(m => mediaGrid.innerHTML += `<img src="${m.text}" onclick="window.open('${m.text}')">`);
-    media.videos.forEach(m => mediaGrid.innerHTML += `<video src="${m.text}" onclick="window.open('${m.text}')"></video>`);
+const res = await fetch(`/api/chat-media/${currentChatId}`);
+const media = await res.json();
+const mediaGrid = document.getElementById('mediaGrid');
+const filesList = document.getElementById('filesList');
+if (mediaGrid) {
+mediaGrid.innerHTML = '';
+if (media.images && media.images.length > 0) {
+media.images.forEach(m => mediaGrid.innerHTML += `<img src="${m.text}" onclick="window.open('${m.text}')">`);
+}
+if (media.videos && media.videos.length > 0) {
+media.videos.forEach(m => mediaGrid.innerHTML += `<video src="${m.text}" onclick="window.open('${m.text}')"></video>`);
+}
+}
+if (filesList) {
+filesList.innerHTML = '';
+if (media.files && media.files.length > 0) {
+media.files.forEach(f => filesList.innerHTML += `<div style="padding:8px;border-bottom:1px solid var(--border);">📎 ${f.fileName || 'Файл'}<br><a href="${f.text}" download>Скачать</a></div>`);
+}
+}
 }
 
-// === SOCKET EVENTS ===
+async function searchUsers() {
+const query = document.getElementById('searchInput').value.trim();
+const suggestions = document.getElementById('searchSuggestions');
+if (query.length < 1) { 
+if (suggestions) suggestions.classList.add('hidden'); 
+return; 
+}
+const res = await fetch(`/api/users/search/${query}?exclude=${currentUser.id}`);
+const users = await res.json();
+if (suggestions) {
+suggestions.innerHTML = '';
+users.forEach(u => {
+const div = document.createElement('div');
+div.className = 'suggestion-item animate-fade';
+let avatarContent = u.id[1].toUpperCase();
+if (u.avatarImage) avatarContent = `<img src="${u.avatarImage}" style="width:35px;height:35px;border-radius:50%">`;
+div.innerHTML = `<div class="avatar" style="width:35px;height:35px;font-size:14px;background:${u.avatarColor}">${avatarContent}</div><div><b>${u.id}</b><br><small>${u.name} ${u.surname}</small></div>`;
+div.onclick = () => { openChat(u.id, 'private'); suggestions.classList.add('hidden'); const searchInput = document.getElementById('searchInput'); if (searchInput) searchInput.value = ''; };
+suggestions.appendChild(div);
+});
+suggestions.classList.toggle('hidden', users.length === 0);
+}
+}
+
+// === SOCKET EVENTS - ИСПРАВЛЕНО ===
 socket.on('receive_message', (data) => {
-    if (data.chatId === currentChatId) {
-        const area = document.getElementById('messagesArea');
-        const div = document.createElement('div');
-        div.className = `message ${data.message.from === currentUser.id ? 'me' : 'other'} animate-fade`;
-        let senderInfo = '';
-        if (currentChatType !== 'private' && data.message.from !== currentUser.id) {
-            const sender = allUsers.find(u => u.id === data.message.from);
-            senderInfo = `<div class="sender-name">${sender ? sender.name : data.message.from}</div>`;
-        }
-        let content = data.message.text;
-        if (data.message.type === 'sticker') content = `<div style="font-size:48px;">${data.message.text}</div>`;
-        else if (data.message.type === 'image') content = `<img src="${data.message.text}">`;
-        else if (data.message.type === 'video') content = `<video src="${data.message.text}" controls>`;
-        else if (data.message.type === 'audio') content = `<audio src="${data.message.text}" controls>`;
-        else if (data.message.type === 'file') content = `<div class="message-file">📎 ${data.message.fileName}</div>`;
-        div.innerHTML = `${senderInfo}${content}<div class="message-time">${data.message.time}</div>`;
-        area.appendChild(div);
-        area.scrollTop = area.scrollHeight;
-        if (data.message.from !== currentUser.id) {
-            playNotificationSound();
-        }
-    }
-    if (data.message.from !== currentUser.id) {
-        const sender = allUsers.find(u => u.id === data.message.from);
-        showNotification(data.message.from, sender?.name || data.message.from, (data.message.text || '').substring(0, 20) + '...');
-    }
-    loadChats();
+if (data.chatId === currentChatId) {
+const area = document.getElementById('messagesArea');
+if (area) {
+const div = document.createElement('div');
+div.className = `message ${data.message.from === currentUser.id ? 'me' : 'other'} animate-fade`;
+let senderInfo = '';
+if (currentChatType !== 'private' && data.message.from !== currentUser.id) {
+const sender = allUsers.find(u => u.id === data.message.from);
+senderInfo = `<div class="sender-name">${sender ? sender.name : data.message.from}</div>`;
+}
+let content = data.message.text || '';
+if (data.message.type === 'sticker') content = `<div style="font-size:48px;">${data.message.text}</div>`;
+else if (data.message.type === 'image') content = `<img src="${data.message.text}">`;
+else if (data.message.type === 'video') content = `<video src="${data.message.text}" controls></video>`;
+else if (data.message.type === 'audio' || data.message.type === 'voice') content = renderVoiceMessage(data.message.text, data.message.duration || '0:00');
+else if (data.message.type === 'file') content = `<div class="message-file">📎 ${data.message.fileName || 'Файл'}</div>`;
+div.innerHTML = `${senderInfo}${content}<div class="message-time">${data.message.time}</div>`;
+area.appendChild(div);
+area.scrollTop = area.scrollHeight;
+}
+if (data.message.from !== currentUser.id) {
+playNotificationSound();
+}
+}
+if (data.message.from !== currentUser.id) {
+const sender = allUsers.find(u => u.id === data.message.from);
+showNotification(data.message.from, sender?.name || data.message.from, (data.message.text || '').substring(0, 20) + '...');
+}
+loadChats();
 });
 
 socket.on('message_status_updated', (data) => {
-    if (data.readBy && data.readBy.length > 1) {
-        loadChats();
-    }
+if (data.readBy && data.readBy.length > 1) {
+loadChats();
+}
 });
 
 socket.on('message_deleted', () => {
-    if (currentChatId) {
-        fetch(`/api/messages/${currentChatId}`).then(r=>r.json()).then(msgs => {
-            renderMessages(msgs);
-        });
-    }
-    loadChats();
+if (currentChatId) {
+fetch(`/api/messages/${currentChatId}`).then(r=>r.json()).then(msgs => {
+renderMessages(msgs);
+});
+}
+loadChats();
 });
 
 socket.on('user_status', (data) => {
-    const user = allUsers.find(u => u.id === data.id);
-    if (user) {
-        user.online = data.online;
-        loadChats();
-    }
+const user = allUsers.find(u => u.id === data.id);
+if (user) {
+user.online = data.online;
+loadChats();
+// Обновляем статус в заголовке если это текущий чат
+if (currentChatPartner === data.id) {
+const headerStatus = document.getElementById('headerStatus');
+if (headerStatus) {
+headerStatus.innerText = data.online ? 'в сети' : '';
+headerStatus.className = 'chat-status ' + (data.online ? 'online' : '');
+}
+}
+}
 });
 
 socket.on('new_chat_notification', (data) => {
-    showNotification(data.from, data.fromName, data.message);
-    playNotificationSound();
-    loadChats();
+showNotification(data.from, data.fromName, data.message);
+playNotificationSound();
+loadChats();
 });
 
+// === TYPING - ИСПРАВЛЕНО ===
 socket.on('user_typing', (data) => {
-    if (data.chatId === currentChatId && data.userId !== currentUser.id) {
-        const indicator = document.getElementById('typingIndicator');
-        if (indicator) {
-            indicator.innerText = 'печатает...';
-            indicator.classList.remove('hidden');
-            setTimeout(() => indicator.classList.add('hidden'), 2000);
-        }
-    }
+if (data.chatId === currentChatId && data.userId !== currentUser.id) {
+const indicator = document.getElementById('typingIndicator');
+if (indicator) {
+indicator.innerText = 'печатает...';
+indicator.classList.remove('hidden');
+// Сбрасываем предыдущий таймер
+if (typingTimeout) clearTimeout(typingTimeout);
+// Устанавливаем таймер на скрытие
+typingTimeout = setTimeout(() => {
+if (indicator) indicator.classList.add('hidden');
+}, 2000);
+}
+}
+});
+
+socket.on('stop_typing', (data) => {
+if (data.chatId === currentChatId) {
+const indicator = document.getElementById('typingIndicator');
+if (indicator) indicator.classList.add('hidden');
+}
 });
 
 // === УВЕДОМЛЕНИЯ ===
-function showNotification(from, fromName, message) {
-    const settings = JSON.parse(localStorage.getItem('mm_settings_' + currentUser.id) || '{}');
-    if (!settings.notifications) return;
-    if ('Notification' in window && Notification.permission === 'granted') {
-        new Notification('Telepam', {
-            body: `${fromName}: ${message}`,
-            icon: '/favicon.ico'
-        });
-    }
-    const container = document.getElementById('notificationContainer');
-    if (!container) return;
-    const notif = document.createElement('div');
-    notif.className = 'notification-toast animate-slide';
-    const user = allUsers.find(u => u.id === from);
-    let avatarContent = from[1].toUpperCase();
-    if (user?.avatarImage) avatarContent = `<img src="${user.avatarImage}" style="width:100%;height:100%;border-radius:50%">`;
-    notif.innerHTML = `
-    <div class="notification-avatar" style="background:${user?.avatarColor}">${avatarContent}</div>
-    <div class="notification-content">
-    <div class="notification-title">${fromName}</div>
-    <div class="notification-message">${message}</div>
-    </div>
-    <button class="notification-close" onclick="this.parentElement.remove()">×</button>
-    `;
-    container.appendChild(notif);
-    setTimeout(() => {
-        if (notif && notif.parentNode) {
-            try {
-                notif.remove();
-            } catch (e) {
-                console.log('Notification already removed:', e);
-            }
-        }
-    }, 5000);
+function playNotificationSound() {
+if (userSettings.sound) {
+const audio = document.getElementById('notificationSound');
+if (audio) {
+audio.volume = 0.5;
+audio.play().catch(() => {});
+}
+}
 }
 
+function showNotification(from, fromName, message) {
+const settings = JSON.parse(localStorage.getItem('mm_settings_' + currentUser.id) || '{}');
+if (!settings.notifications) return;
+if ('Notification' in window && Notification.permission === 'granted') {
+new Notification('Telepam', {
+body: `${fromName}: ${message}`,
+icon: '/favicon.ico'
+});
+}
+const container = document.getElementById('notificationContainer');
+if (!container) return;
+const notif = document.createElement('div');
+notif.className = 'notification-toast animate-slide';
+const user = allUsers.find(u => u.id === from);
+let avatarContent = from[1].toUpperCase();
+if (user?.avatarImage) avatarContent = `<img src="${user.avatarImage}" style="width:100%;height:100%;border-radius:50%">`;
+notif.innerHTML = `
+<div class="notification-avatar" style="background:${user?.avatarColor}">${avatarContent}</div>
+<div class="notification-content">
+<div class="notification-title">${fromName}</div>
+<div class="notification-message">${message}</div>
+</div>
+<button class="notification-close" onclick="this.parentElement.remove()">×</button>
+`;
+container.appendChild(notif);
+setTimeout(() => {
+if (notif && notif.parentNode) {
+try {
+notif.remove();
+} catch (e) {
+console.log('Notification already removed:', e);
+}
+}
+}, 5000);
+}
+
+// === ОБРАБОТЧИК КЛИКОВ ===
 window.onclick = (e) => {
-    if (!e.target.closest('.settings-menu') && !e.target.closest('.icon-btn') && !e.target.closest('.my-profile-btn')) {
-        document.getElementById('settingsMenu').classList.add('hidden');
-        document.getElementById('myProfileSidebar').classList.add('hidden');
-    }
-    if (!e.target.closest('.stickers-panel') && !e.target.closest('.icon-btn')) document.getElementById('stickersPanel').classList.add('hidden');
-    if (!e.target.closest('.emoji-picker') && !e.target.closest('.icon-btn')) document.getElementById('emojiPicker').classList.add('hidden');
-    if (!e.target.closest('.forward-panel') && !e.target.closest('.icon-btn')) document.getElementById('forwardPanel').classList.add('hidden');
-    if (!e.target.closest('.search-suggestions') && !e.target.closest('.search-box')) document.getElementById('searchSuggestions').classList.add('hidden');
+const settingsMenu = document.getElementById('settingsMenu');
+const myProfileBtn = document.getElementById('myProfileBtn');
+const myProfileSidebar = document.getElementById('myProfileSidebar');
+const stickersPanel = document.getElementById('stickersPanel');
+const emojiPicker = document.getElementById('emojiPicker');
+const forwardPanel = document.getElementById('forwardPanel');
+const searchSuggestions = document.getElementById('searchSuggestions');
+const searchBox = document.getElementById('searchInput');
+
+if (settingsMenu && myProfileBtn && myProfileSidebar) {
+if (!e.target.closest('.settings-menu') && 
+!e.target.closest('.icon-btn') && 
+!e.target.closest('.my-profile-btn')) {
+settingsMenu.classList.add('hidden');
+myProfileSidebar.classList.add('hidden');
+}
+}
+if (stickersPanel && !e.target.closest('.stickers-panel') && !e.target.closest('.icon-btn')) {
+stickersPanel.classList.add('hidden');
+}
+if (emojiPicker && !e.target.closest('.emoji-picker') && !e.target.closest('.icon-btn')) {
+emojiPicker.classList.add('hidden');
+}
+if (forwardPanel && !e.target.closest('.forward-panel') && !e.target.closest('.icon-btn')) {
+forwardPanel.classList.add('hidden');
+}
+if (searchSuggestions && searchBox && 
+!e.target.closest('.search-suggestions') && 
+!e.target.closest('.search-box')) {
+searchSuggestions.classList.add('hidden');
+}
 };
 </script>
 </body>
