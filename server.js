@@ -17,7 +17,7 @@ app.use('/uploads', express.static('uploads'));
 
 // === POSTGRESQL ПОДКЛЮЧЕНИЕ ===
 const pool = new Pool({
-    connectionString: process.env.DATABASE_URL,
+    connectionString: process.env.postgresql://db_telemapm_user:8MAMpE6XiZRJPCyBdj2NOUa7H8CFywEg@dpg-d71gk36a2pns73f6tlag-a/db_telemapm,
     ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
 });
 
