@@ -3,7 +3,7 @@ const http = require('http');
 const { Server } = require('socket.io');
 const cors = require('cors');
 const fs = require('fs');
-const path = require('path');
+const multer = require('multer');
 const { Pool } = require('pg');
 
 const app = express();
@@ -17,25 +17,26 @@ app.use('/uploads', express.static('uploads'));
 
 // === POSTGRESQL ПОДКЛЮЧЕНИЕ ===
 const pool = new Pool({
-    connectionString: process.env.postgresql://db_telemapm_user:8MAMpE6XiZRJPCyBdj2NOUa7H8CFywEg@dpg-d71gk36a2pns73f6tlag-a/db_telemapm,
-    ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
+    connectionString: process.env.DATABASE_URL || 'postgresql://db_telemapm_user:8MAMpE6XiZRJPCyBdj2NOUa7H8CFywEg@dpg-d71gk36a2pns73f6tlag-a/db_telemapm',
+    ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false,
+    max: 20,
+    idleTimeoutMillis: 30000,
+    connectionTimeoutMillis: 2000
 });
 
 // Проверка подключения
-pool.connect((err, client, release) => {
-    if (err) {
-        console.error('❌ PostgreSQL connection error:', err.stack);
-    } else {
-        console.log('✅ PostgreSQL connected successfully');
-        release();
-    }
+pool.on('connect', () => {
+    console.log('✅ PostgreSQL connected');
+});
+
+pool.on('error', (err) => {
+    console.error('❌ PostgreSQL error:', err);
 });
 
 // === СОЗДАНИЕ ТАБЛИЦ ===
 async function createTables() {
     const client = await pool.connect();
     try {
-        // Пользователи
         await client.query(`
             CREATE TABLE IF NOT EXISTS users (
                 id TEXT PRIMARY KEY,
@@ -52,7 +53,6 @@ async function createTables() {
             )
         `);
 
-        // Друзья
         await client.query(`
             CREATE TABLE IF NOT EXISTS friends (
                 user_id TEXT NOT NULL,
@@ -64,7 +64,6 @@ async function createTables() {
             )
         `);
 
-        // Группы
         await client.query(`
             CREATE TABLE IF NOT EXISTS groups (
                 id TEXT PRIMARY KEY,
@@ -80,7 +79,6 @@ async function createTables() {
             )
         `);
 
-        // Сообщения
         await client.query(`
             CREATE TABLE IF NOT EXISTS messages (
                 id SERIAL PRIMARY KEY,
@@ -102,7 +100,6 @@ async function createTables() {
             )
         `);
 
-        // Настройки
         await client.query(`
             CREATE TABLE IF NOT EXISTS settings (
                 user_id TEXT PRIMARY KEY,
@@ -115,15 +112,18 @@ async function createTables() {
             )
         `);
 
-        // Папки
         await client.query(`
             CREATE TABLE IF NOT EXISTS folders (
-                user_id TEXT NOT NULL,
+                user_id TEXT PRIMARY KEY,
                 folders JSONB DEFAULT '[{"id": "all", "name": "Все чаты", "chats": [], "icon": "💬"}]',
-                PRIMARY KEY (user_id),
                 FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
             )
         `);
+
+        // Индексы для скорости
+        await client.query(`CREATE INDEX IF NOT EXISTS idx_messages_chat_id ON messages(chat_id)`);
+        await client.query(`CREATE INDEX IF NOT EXISTS idx_messages_created_at ON messages(created_at)`);
+        await client.query(`CREATE INDEX IF NOT EXISTS idx_friends_user_id ON friends(user_id)`);
 
         console.log('✅ Tables created successfully');
     } catch (err) {
@@ -134,7 +134,6 @@ async function createTables() {
 }
 
 // === ЗАГРУЗКА ФАЙЛОВ ===
-const multer = require('multer');
 const UPLOAD_DIR = './uploads';
 if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 
@@ -163,7 +162,6 @@ app.post('/api/register', async (req, res) => {
     
     const client = await pool.connect();
     try {
-        // Проверка существования
         const existing = await client.query('SELECT * FROM users WHERE id = $1', [id]);
         
         if (existing.rows.length > 0) {
@@ -173,7 +171,6 @@ app.post('/api/register', async (req, res) => {
             return res.json({ success: true, user: existing.rows[0], action: 'login' });
         }
         
-        // Создание пользователя
         const newUser = {
             id, name, surname, password,
             avatar_color: avatarColor || '#007aff',
@@ -190,7 +187,6 @@ app.post('/api/register', async (req, res) => {
         `, [id, name, surname, password, newUser.avatar_color, newUser.avatar_image, newUser.bio, 
             JSON.stringify(newUser.channels), newUser.status, newUser.last_seen]);
         
-        // Настройки
         await client.query(`
             INSERT INTO settings (user_id, privacy, blocked, notifications, sound, theme)
             VALUES ($1, $2, $3, $4, $5, $6)
@@ -200,12 +196,13 @@ app.post('/api/register', async (req, res) => {
             [], true, true, 
             JSON.stringify({ accentColor: '#007aff', animationSpeed: 'normal' })]);
         
-        // Друзья (пустой список)
         await client.query(`
             INSERT INTO folders (user_id, folders)
             VALUES ($1, $2)
             ON CONFLICT (user_id) DO NOTHING
         `, [id, JSON.stringify([{ id: 'all', name: 'Все чаты', chats: [], icon: '💬' }])]);
+        
+        await client.query(`INSERT INTO friends (user_id, friend_id) VALUES ($1, $1) ON CONFLICT DO NOTHING`, [id]);
         
         res.json({ success: true, user: newUser, action: 'register' });
     } catch (err) {
@@ -330,7 +327,7 @@ app.get('/api/friends/:userId', async (req, res) => {
     const client = await pool.connect();
     try {
         const result = await client.query(`
-            SELECT friend_id FROM friends WHERE user_id = $1
+            SELECT friend_id FROM friends WHERE user_id = $1 AND friend_id != user_id
         `, [req.params.userId]);
         
         const friendIds = result.rows.map(r => r.friend_id);
@@ -367,17 +364,17 @@ app.post('/api/friends/:userId', async (req, res) => {
         if (action === 'add') {
             await client.query(`
                 INSERT INTO friends (user_id, friend_id)
-                VALUES ($1, $2)
+                VALUES ($1, $2), ($2, $1)
                 ON CONFLICT (user_id, friend_id) DO NOTHING
             `, [req.params.userId, friendId]);
         } else if (action === 'remove') {
             await client.query(`
-                DELETE FROM friends WHERE user_id = $1 AND friend_id = $2
+                DELETE FROM friends WHERE (user_id = $1 AND friend_id = $2) OR (user_id = $2 AND friend_id = $1)
             `, [req.params.userId, friendId]);
         }
         
         const result = await client.query(`
-            SELECT friend_id FROM friends WHERE user_id = $1
+            SELECT friend_id FROM friends WHERE user_id = $1 AND friend_id != user_id
         `, [req.params.userId]);
         
         res.json({ success: true, friends: result.rows.map(r => r.friend_id) });
@@ -436,7 +433,9 @@ app.get('/api/chats/:userId', async (req, res) => {
         const privateChats = await client.query(`
             SELECT DISTINCT chat_id, MAX(created_at) as last_time
             FROM messages
-            WHERE chat_id LIKE '%_${req.params.userId}_%' OR chat_id LIKE '${req.params.userId}_%' OR chat_id LIKE '%_${req.params.userId}'
+            WHERE chat_id LIKE '%_${req.params.userId}_%' 
+               OR chat_id LIKE '${req.params.userId}_%' 
+               OR chat_id LIKE '%_${req.params.userId}'
             GROUP BY chat_id
             ORDER BY last_time DESC
         `);
@@ -479,7 +478,8 @@ app.get('/api/chats/:userId', async (req, res) => {
         
         for (const group of groupsResult.rows) {
             const lastMsgResult = await client.query(`
-                SELECT text, type, file_name, created_at FROM messages WHERE chat_id = $1 ORDER BY created_at DESC LIMIT 1
+                SELECT text, type, file_name, created_at FROM messages 
+                WHERE chat_id = $1 ORDER BY created_at DESC LIMIT 1
             `, [group.id]);
             
             const lastMsg = lastMsgResult.rows[0];
@@ -890,8 +890,10 @@ createTables().then(() => {
     })();
     
     const PORT = process.env.PORT || 3000;
-    server.listen(PORT, () => {
+    server.listen(PORT, '0.0.0.0', () => {
         console.log(`✅ SERVER RUNNING ON PORT ${PORT}`);
         console.log(`🌍 Local: http://localhost:${PORT}`);
     });
+}).catch(err => {
+    console.error('❌ Failed to initialize:', err);
 });
