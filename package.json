@@ -1,7 +1,7 @@
 {
   "name": "telepam-messenger",
   "version": "1.0.0",
-  "description": "Telepam Messenger with RSA Encryption",
+  "description": "Telepam Messenger",
   "main": "server.js",
   "scripts": {
     "start": "server.js",
