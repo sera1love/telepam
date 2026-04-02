@@ -1,0 +1,25 @@
+.auth-tabs {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 20px;
+}
+
+.auth-tab {
+    flex: 1;
+    padding: 12px;
+    border-radius: 10px;
+    cursor: pointer;
+    text-align: center;
+    background: var(--bg-app);
+    color: var(--text-secondary);
+    font-size: 14px;
+}
+
+.auth-tab.active {
+    background: var(--accent);
+    color: white;
+}
+
+#loginForm, #registerForm {
+    animation: fadeIn 0.3s ease;
+}
