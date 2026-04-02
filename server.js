@@ -5,21 +5,33 @@ const cors = require('cors');
 const fs = require('fs');
 const multer = require('multer');
 const { Pool } = require('pg');
+const NodeRSA = require('node-rsa');
 const path = require('path');
 require('dotenv').config();
 
 const app = express();
 const server = http.createServer(app);
-const io = new Server(server, { cors: { origin: "*" } });
+const io = new Server(server, { 
+    cors: { 
+        origin: "*",
+        methods: ["GET", "POST"]
+    } 
+});
 
 app.use(cors());
 app.use(express.static(path.join(__dirname, 'public')));
-app.use(express.json());
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+
+// === RSA KEY GENERATION ===
+const rsaKey = new NodeRSA({ b: 512 });
+const publicKey = rsaKey.exportKey('public');
+const privateKey = rsaKey.exportKey('private');
 
 // === POSTGRESQL ПОДКЛЮЧЕНИЕ ===
 const pool = new Pool({
-    connectionString: process.env.DATABASE_URL,
+    connectionString: process.env.DATABASE_URL || 'postgresql://db_telemapm_user:8MAMpE6XiZRJPCyBdj2NOUa7H8CFywEg@dpg-d71gk36a2pns73f6tlag-a/db_telemapm',
     ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false,
     max: 20,
     idleTimeoutMillis: 30000,
@@ -34,52 +46,84 @@ async function createTables() {
     const client = await pool.connect();
     try {
         await client.query(`CREATE TABLE IF NOT EXISTS users (
-            id TEXT PRIMARY KEY, name TEXT NOT NULL, surname TEXT, password TEXT NOT NULL,
-            avatar_color TEXT DEFAULT '#5288c1', avatar_image TEXT, bio TEXT, channels JSONB DEFAULT '[]',
-            status TEXT DEFAULT 'offline', last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            surname TEXT,
+            password TEXT NOT NULL,
+            avatar_color TEXT DEFAULT '#007aff',
+            avatar_image TEXT,
+            bio TEXT,
+            public_key TEXT,
+            channels JSONB DEFAULT '[]',
+            status TEXT DEFAULT 'offline',
+            last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )`);
-        
+
         await client.query(`CREATE TABLE IF NOT EXISTS friends (
-            user_id TEXT NOT NULL, friend_id TEXT NOT NULL, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            user_id TEXT NOT NULL,
+            friend_id TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             PRIMARY KEY (user_id, friend_id),
             FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
             FOREIGN KEY (friend_id) REFERENCES users(id) ON DELETE CASCADE
         )`);
-        
+
         await client.query(`CREATE TABLE IF NOT EXISTS groups (
-            id TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT, creator_id TEXT NOT NULL,
-            avatar_color TEXT DEFAULT '#5288c1', avatar_image TEXT, type TEXT DEFAULT 'group',
-            members TEXT[] DEFAULT '{}', admins TEXT[] DEFAULT '{}', created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            description TEXT,
+            creator_id TEXT NOT NULL,
+            avatar_color TEXT DEFAULT '#007aff',
+            avatar_image TEXT,
+            type TEXT DEFAULT 'group',
+            members TEXT[] DEFAULT '{}',
+            admins TEXT[] DEFAULT '{}',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (creator_id) REFERENCES users(id) ON DELETE CASCADE
         )`);
-        
+
         await client.query(`CREATE TABLE IF NOT EXISTS messages (
-            id SERIAL PRIMARY KEY, chat_id TEXT NOT NULL, from_user_id TEXT NOT NULL, text TEXT,
-            encrypted BOOLEAN DEFAULT false, type TEXT DEFAULT 'text', file_name TEXT, file_size INTEGER,
-            duration TEXT, reply_to TEXT, reply_to_index INTEGER, deleted BOOLEAN DEFAULT false,
-            edited BOOLEAN DEFAULT false, read_by TEXT[] DEFAULT '{}', reactions JSONB DEFAULT '[]',
-            views INTEGER DEFAULT 0, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            id SERIAL PRIMARY KEY,
+            chat_id TEXT NOT NULL,
+            from_user_id TEXT NOT NULL,
+            text TEXT,
+            encrypted BOOLEAN DEFAULT false,
+            type TEXT DEFAULT 'text',
+            file_name TEXT,
+            file_size INTEGER,
+            duration TEXT,
+            reply_to TEXT,
+            reply_to_index INTEGER,
+            deleted BOOLEAN DEFAULT false,
+            edited BOOLEAN DEFAULT false,
+            read_by TEXT[] DEFAULT '{}',
+            reactions JSONB DEFAULT '[]',
+            views INTEGER DEFAULT 0,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (from_user_id) REFERENCES users(id) ON DELETE CASCADE
         )`);
-        
+
         await client.query(`CREATE TABLE IF NOT EXISTS settings (
             user_id TEXT PRIMARY KEY,
             privacy JSONB DEFAULT '{"showBio": true, "showChannels": true, "whoCanMessage": "all"}',
-            blocked TEXT[] DEFAULT '{}', notifications BOOLEAN DEFAULT true, sound BOOLEAN DEFAULT true,
-            theme JSONB DEFAULT '{"accentColor": "#5288c1", "animationSpeed": "normal"}',
+            blocked TEXT[] DEFAULT '{}',
+            notifications BOOLEAN DEFAULT true,
+            sound BOOLEAN DEFAULT true,
+            theme JSONB DEFAULT '{"accentColor": "#007aff", "animationSpeed": "normal"}',
             FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
         )`);
-        
+
         await client.query(`CREATE TABLE IF NOT EXISTS folders (
             user_id TEXT PRIMARY KEY,
             folders JSONB DEFAULT '[{"id": "all", "name": "Все чаты", "chats": [], "icon": "💬"}]',
             FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
         )`);
-        
+
         await client.query(`CREATE INDEX IF NOT EXISTS idx_messages_chat_id ON messages(chat_id)`);
         await client.query(`CREATE INDEX IF NOT EXISTS idx_messages_created_at ON messages(created_at)`);
         await client.query(`CREATE INDEX IF NOT EXISTS idx_friends_user_id ON friends(user_id)`);
-        
+
         console.log('✅ Tables created successfully');
     } catch (err) {
         console.error('❌ Error creating tables:', err);
@@ -97,17 +141,27 @@ const storage = multer.diskStorage({
     filename: (req, file, cb) => cb(null, Date.now() + '-' + file.originalname.replace(/[^a-zA-Z0-9.-]/g, '_'))
 });
 
-const upload = multer({ storage, limits: { fileSize: 100 * 1024 * 1024 } });
+const upload = multer({ 
+    storage,
+    limits: { fileSize: 100 * 1024 * 1024 }
+});
 
 // === ONLINE USERS ===
 let onlineUsers = new Map();
-let typingUsers = new Map();
+let userPublicKeys = new Map();
 
 // === API ROUTES ===
+
+// Получить публичный ключ сервера
+app.get('/api/public-key', (req, res) => {
+    res.json({ publicKey });
+});
+
+// Регистрация
 app.post('/api/register', async (req, res) => {
-    const { id, name, surname, password, avatarColor, avatarImage, bio } = req.body;
+    const { id, name, surname, password, avatarColor, avatarImage, bio, publicKey } = req.body;
     if (!id.startsWith('@')) return res.status(400).json({ error: 'ID должен начинаться с @' });
-    
+
     const client = await pool.connect();
     try {
         const existing = await client.query('SELECT * FROM users WHERE id = $1', [id]);
@@ -115,13 +169,34 @@ app.post('/api/register', async (req, res) => {
             if (existing.rows[0].password !== password) return res.status(401).json({ error: 'Неверный пароль' });
             return res.json({ success: true, user: existing.rows[0], action: 'login' });
         }
-        
-        const newUser = { id, name, surname, password, avatar_color: avatarColor || '#5288c1', avatar_image: avatarImage || null, bio: bio || '', channels: [], status: 'offline', last_seen: new Date().toISOString() };
-        
-        await client.query(`INSERT INTO users (id, name, surname, password, avatar_color, avatar_image, bio, channels, status, last_seen) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`, [id, name, surname, password, newUser.avatar_color, newUser.avatar_image, newUser.bio, JSON.stringify(newUser.channels), newUser.status, newUser.last_seen]);
-        await client.query(`INSERT INTO settings (user_id, privacy, blocked, notifications, sound, theme) VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (user_id) DO NOTHING`, [id, JSON.stringify({ showBio: true, showChannels: true, whoCanMessage: 'all' }), [], true, true, JSON.stringify({ accentColor: '#5288c1', animationSpeed: 'normal' })]);
-        await client.query(`INSERT INTO folders (user_id, folders) VALUES ($1, $2) ON CONFLICT (user_id) DO NOTHING`, [id, JSON.stringify([{ id: 'all', name: 'Все чаты', chats: [], icon: '💬' }])]);
-        
+
+        const newUser = {
+            id, name, surname, password,
+            avatar_color: avatarColor || '#007aff',
+            avatar_image: avatarImage || null,
+            bio: bio || '',
+            public_key: publicKey || null,
+            channels: [],
+            status: 'offline',
+            last_seen: new Date().toISOString()
+        };
+
+        await client.query(`
+            INSERT INTO users (id, name, surname, password, avatar_color, avatar_image, bio, public_key, channels, status, last_seen)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+        `, [id, name, surname, password, newUser.avatar_color, newUser.avatar_image, newUser.bio, 
+            newUser.public_key, JSON.stringify(newUser.channels), newUser.status, newUser.last_seen]);
+
+        await client.query(`
+            INSERT INTO settings (user_id, privacy, blocked, notifications, sound, theme)
+            VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (user_id) DO NOTHING
+        `, [id, JSON.stringify({ showBio: true, showChannels: true, whoCanMessage: 'all' }), [], true, true, 
+            JSON.stringify({ accentColor: '#007aff', animationSpeed: 'normal' })]);
+
+        await client.query(`
+            INSERT INTO folders (user_id, folders) VALUES ($1, $2) ON CONFLICT (user_id) DO NOTHING
+        `, [id, JSON.stringify([{ id: 'all', name: 'Все чаты', chats: [], icon: '💬' }])]);
+
         res.json({ success: true, user: newUser, action: 'register' });
     } catch (err) {
         console.error('Register error:', err);
@@ -131,6 +206,7 @@ app.post('/api/register', async (req, res) => {
     }
 });
 
+// Логин
 app.post('/api/login', async (req, res) => {
     const { id, password } = req.body;
     const client = await pool.connect();
@@ -147,11 +223,21 @@ app.post('/api/login', async (req, res) => {
     }
 });
 
+// Обновление профиля
 app.put('/api/users/:id', async (req, res) => {
-    const { avatar_image, avatar_color, bio, name, surname } = req.body;
+    const { avatar_image, avatar_color, bio, name, surname, public_key } = req.body;
     const client = await pool.connect();
     try {
-        await client.query(`UPDATE users SET avatar_image = COALESCE($1, avatar_image), avatar_color = COALESCE($2, avatar_color), bio = COALESCE($3, bio), name = COALESCE($4, name), surname = COALESCE($5, surname) WHERE id = $6`, [avatar_image, avatar_color, bio, name, surname, req.params.id]);
+        await client.query(`
+            UPDATE users SET avatar_image = COALESCE($1, avatar_image), 
+                avatar_color = COALESCE($2, avatar_color),
+                bio = COALESCE($3, bio),
+                name = COALESCE($4, name),
+                surname = COALESCE($5, surname),
+                public_key = COALESCE($6, public_key)
+            WHERE id = $7
+        `, [avatar_image, avatar_color, bio, name, surname, public_key, req.params.id]);
+        
         const result = await client.query('SELECT * FROM users WHERE id = $1', [req.params.id]);
         res.json({ success: true, user: result.rows[0] });
     } catch (err) {
@@ -162,12 +248,16 @@ app.put('/api/users/:id', async (req, res) => {
     }
 });
 
+// Поиск пользователей
 app.get('/api/users/search/:query', async (req, res) => {
     const query = req.params.query.toLowerCase();
     const exclude = req.query.exclude;
     const client = await pool.connect();
     try {
-        const result = await client.query(`SELECT id, name, surname, avatar_color, avatar_image, bio, channels FROM users WHERE (LOWER(id) LIKE $1 OR LOWER(name) LIKE $1) AND id != $2 LIMIT 10`, [`%${query}%`, exclude]);
+        const result = await client.query(`
+            SELECT id, name, surname, avatar_color, avatar_image, bio, channels, public_key
+            FROM users WHERE (LOWER(id) LIKE $1 OR LOWER(name) LIKE $1) AND id != $2 LIMIT 10
+        `, [`%${query}%`, exclude]);
         res.json(result.rows.map(u => ({ ...u, avatarColor: u.avatar_color, avatarImage: u.avatar_image, online: onlineUsers.has(u.id) })));
     } catch (err) {
         console.error('Search error:', err);
@@ -177,10 +267,11 @@ app.get('/api/users/search/:query', async (req, res) => {
     }
 });
 
+// Все пользователи
 app.get('/api/users', async (req, res) => {
     const client = await pool.connect();
     try {
-        const result = await client.query(`SELECT id, name, surname, avatar_color, avatar_image, bio, channels, status, last_seen FROM users`);
+        const result = await client.query(`SELECT id, name, surname, avatar_color, avatar_image, bio, channels, status, last_seen, public_key FROM users`);
         res.json(result.rows.map(u => ({ ...u, avatarColor: u.avatar_color, avatarImage: u.avatar_image, online: onlineUsers.has(u.id) })));
     } catch (err) {
         console.error('Users error:', err);
@@ -190,6 +281,7 @@ app.get('/api/users', async (req, res) => {
     }
 });
 
+// Профиль пользователя
 app.get('/api/user/:id', async (req, res) => {
     const client = await pool.connect();
     try {
@@ -198,7 +290,15 @@ app.get('/api/user/:id', async (req, res) => {
         const user = userResult.rows[0];
         const settingsResult = await client.query('SELECT * FROM settings WHERE user_id = $1', [req.params.id]);
         const settings = settingsResult.rows[0] || {};
-        res.json({ id: user.id, name: user.name, surname: user.surname, avatarColor: user.avatar_color, avatarImage: user.avatar_image, bio: settings.privacy?.showBio ? user.bio : '', channels: settings.privacy?.showChannels ? user.channels : [], online: onlineUsers.has(req.params.id), lastSeen: user.last_seen });
+        res.json({
+            id: user.id, name: user.name, surname: user.surname,
+            avatarColor: user.avatar_color, avatarImage: user.avatar_image,
+            bio: settings.privacy?.showBio ? user.bio : '',
+            publicKey: user.public_key,
+            channels: settings.privacy?.showChannels ? user.channels : [],
+            online: onlineUsers.has(req.params.id),
+            lastSeen: user.last_seen
+        });
     } catch (err) {
         console.error('User profile error:', err);
         res.status(500).json({ error: 'Server error' });
@@ -207,13 +307,14 @@ app.get('/api/user/:id', async (req, res) => {
     }
 });
 
+// Друзья
 app.get('/api/friends/:userId', async (req, res) => {
     const client = await pool.connect();
     try {
         const result = await client.query(`SELECT friend_id FROM friends WHERE user_id = $1 AND friend_id != user_id`, [req.params.userId]);
         const friendIds = result.rows.map(r => r.friend_id);
         if (friendIds.length === 0) return res.json([]);
-        const usersResult = await client.query(`SELECT id, name, surname, avatar_color, avatar_image, bio, channels FROM users WHERE id = ANY($1)`, [friendIds]);
+        const usersResult = await client.query(`SELECT id, name, surname, avatar_color, avatar_image, bio, channels, public_key FROM users WHERE id = ANY($1)`, [friendIds]);
         res.json(usersResult.rows.map(u => ({ ...u, avatarColor: u.avatar_color, avatarImage: u.avatar_image, online: onlineUsers.has(u.id) })));
     } catch (err) {
         console.error('Friends error:', err);
@@ -223,6 +324,7 @@ app.get('/api/friends/:userId', async (req, res) => {
     }
 });
 
+// Добавить/удалить друга
 app.post('/api/friends/:userId', async (req, res) => {
     const { friendId, action } = req.body;
     const client = await pool.connect();
@@ -242,6 +344,7 @@ app.post('/api/friends/:userId', async (req, res) => {
     }
 });
 
+// Группы
 app.get('/api/groups', async (req, res) => {
     const client = await pool.connect();
     try {
@@ -255,12 +358,14 @@ app.get('/api/groups', async (req, res) => {
     }
 });
 
+// Создать группу
 app.post('/api/groups', async (req, res) => {
     const { name, members, creatorId, avatarColor, type, description } = req.body;
     const id = type === 'channel' ? '@channel_' + Date.now() : '@group_' + Date.now();
     const client = await pool.connect();
     try {
-        await client.query(`INSERT INTO groups (id, name, description, creator_id, avatar_color, type, members, admins) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`, [id, name, description, creatorId, avatarColor, type, [...members, creatorId], [creatorId]]);
+        await client.query(`INSERT INTO groups (id, name, description, creator_id, avatar_color, type, members, admins) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`, 
+            [id, name, description, creatorId, avatarColor, type, [...members, creatorId], [creatorId]]);
         res.json({ success: true, group: { id, name, description, members: [...members, creatorId], creatorId, avatarColor, type, admins: [creatorId] } });
     } catch (err) {
         console.error('Create group error:', err);
@@ -270,105 +375,7 @@ app.post('/api/groups', async (req, res) => {
     }
 });
 
-app.post('/api/groups/:groupId/admin', async (req, res) => {
-    const { userId, action, creatorId } = req.body;
-    const client = await pool.connect();
-    try {
-        const groupResult = await client.query('SELECT * FROM groups WHERE id = $1', [req.params.groupId]);
-        if (groupResult.rows.length === 0) return res.status(404).json({ error: 'Group not found' });
-        const group = groupResult.rows[0];
-        if (group.creator_id !== creatorId) return res.status(403).json({ error: 'Only creator can manage admins' });
-        let admins = group.admins || [];
-        if (action === 'add' && !admins.includes(userId)) admins.push(userId);
-        else if (action === 'remove') admins = admins.filter(a => a !== userId);
-        await client.query('UPDATE groups SET admins = $2 WHERE id = $1', [req.params.groupId, admins]);
-        res.json({ success: true, admins });
-    } catch (err) {
-        console.error('Admin error:', err);
-        res.status(500).json({ error: 'Server error' });
-    } finally {
-        client.release();
-    }
-});
-
-app.post('/api/groups/:groupId/members', async (req, res) => {
-    const { userId, action } = req.body;
-    const client = await pool.connect();
-    try {
-        const groupResult = await client.query('SELECT * FROM groups WHERE id = $1', [req.params.groupId]);
-        if (groupResult.rows.length === 0) return res.status(404).json({ error: 'Group not found' });
-        const group = groupResult.rows[0];
-        let members = group.members || [];
-        if (action === 'add' && !members.includes(userId)) members.push(userId);
-        else if (action === 'remove') members = members.filter(m => m !== userId);
-        await client.query('UPDATE groups SET members = $2 WHERE id = $1', [req.params.groupId, members]);
-        io.emit('group_members_updated', { groupId: group.id, members });
-        res.json({ success: true, group: { ...group, members } });
-    } catch (err) {
-        console.error('Members error:', err);
-        res.status(500).json({ error: 'Server error' });
-    } finally {
-        client.release();
-    }
-});
-
-app.post('/api/groups/:groupId/name', async (req, res) => {
-    const { name } = req.body;
-    const { userId } = req.query;
-    const client = await pool.connect();
-    try {
-        const groupResult = await client.query('SELECT * FROM groups WHERE id = $1', [req.params.groupId]);
-        if (groupResult.rows.length === 0) return res.status(404).json({ error: 'Group not found' });
-        const group = groupResult.rows[0];
-        if (group.creator_id !== userId) return res.status(403).json({ error: 'Only creator can rename' });
-        await client.query('UPDATE groups SET name = $2 WHERE id = $1', [req.params.groupId, name]);
-        res.json({ success: true, group: { ...group, name } });
-    } catch (err) {
-        console.error('Name error:', err);
-        res.status(500).json({ error: 'Server error' });
-    } finally {
-        client.release();
-    }
-});
-
-app.post('/api/groups/:groupId/leave', async (req, res) => {
-    const { userId } = req.body;
-    const client = await pool.connect();
-    try {
-        const groupResult = await client.query('SELECT * FROM groups WHERE id = $1', [req.params.groupId]);
-        if (groupResult.rows.length === 0) return res.status(404).json({ error: 'Group not found' });
-        const group = groupResult.rows[0];
-        let members = group.members || [];
-        members = members.filter(m => m !== userId);
-        if (members.length === 0) await client.query('DELETE FROM groups WHERE id = $1', [req.params.groupId]);
-        else await client.query('UPDATE groups SET members = $2 WHERE id = $1', [req.params.groupId, members]);
-        res.json({ success: true });
-    } catch (err) {
-        console.error('Leave error:', err);
-        res.status(500).json({ error: 'Server error' });
-    } finally {
-        client.release();
-    }
-});
-
-app.delete('/api/groups/:groupId', async (req, res) => {
-    const { userId } = req.query;
-    const client = await pool.connect();
-    try {
-        const groupResult = await client.query('SELECT * FROM groups WHERE id = $1', [req.params.groupId]);
-        if (groupResult.rows.length === 0) return res.status(404).json({ error: 'Group not found' });
-        const group = groupResult.rows[0];
-        if (group.creator_id !== userId) return res.status(403).json({ error: 'Only creator can delete' });
-        await client.query('DELETE FROM groups WHERE id = $1', [req.params.groupId]);
-        res.json({ success: true });
-    } catch (err) {
-        console.error('Delete error:', err);
-        res.status(500).json({ error: 'Server error' });
-    } finally {
-        client.release();
-    }
-});
-
+// Чаты пользователя
 app.get('/api/chats/:userId', async (req, res) => {
     const client = await pool.connect();
     try {
@@ -413,6 +420,7 @@ app.get('/api/chats/:userId', async (req, res) => {
     }
 });
 
+// Сообщения чата
 app.get('/api/messages/:chatId', async (req, res) => {
     const client = await pool.connect();
     try {
@@ -426,6 +434,7 @@ app.get('/api/messages/:chatId', async (req, res) => {
     }
 });
 
+// Медиа чата
 app.get('/api/chat-media/:chatId', async (req, res) => {
     const client = await pool.connect();
     try {
@@ -446,6 +455,7 @@ app.get('/api/chat-media/:chatId', async (req, res) => {
     }
 });
 
+// Удалить сообщение
 app.delete('/api/messages/:chatId/:index', async (req, res) => {
     const { chatId, index } = req.params;
     const { userId } = req.query;
@@ -468,6 +478,7 @@ app.delete('/api/messages/:chatId/:index', async (req, res) => {
     }
 });
 
+// Настройки
 app.get('/api/settings/:userId', async (req, res) => {
     const client = await pool.connect();
     try {
@@ -484,7 +495,8 @@ app.get('/api/settings/:userId', async (req, res) => {
 app.post('/api/settings/:userId', async (req, res) => {
     const client = await pool.connect();
     try {
-        await client.query(`INSERT INTO settings (user_id, privacy, blocked, notifications, sound, theme) VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (user_id) DO UPDATE SET privacy = EXCLUDED.privacy, blocked = EXCLUDED.blocked, notifications = EXCLUDED.notifications, sound = EXCLUDED.sound, theme = EXCLUDED.theme`, [req.params.userId, JSON.stringify(req.body.privacy || {}), req.body.blocked || [], req.body.notifications ?? true, req.body.sound ?? true, JSON.stringify(req.body.theme || {})]);
+        await client.query(`INSERT INTO settings (user_id, privacy, blocked, notifications, sound, theme) VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (user_id) DO UPDATE SET privacy = EXCLUDED.privacy, blocked = EXCLUDED.blocked, notifications = EXCLUDED.notifications, sound = EXCLUDED.sound, theme = EXCLUDED.theme`, 
+            [req.params.userId, JSON.stringify(req.body.privacy || {}), req.body.blocked || [], req.body.notifications ?? true, req.body.sound ?? true, JSON.stringify(req.body.theme || {})]);
         res.json({ success: true });
     } catch (err) {
         console.error('Settings update error:', err);
@@ -494,6 +506,7 @@ app.post('/api/settings/:userId', async (req, res) => {
     }
 });
 
+// Блокировка
 app.post('/api/block/:userId', async (req, res) => {
     const { blockedId } = req.body;
     const client = await pool.connect();
@@ -528,6 +541,7 @@ app.delete('/api/block/:userId/:blockedId', async (req, res) => {
     }
 });
 
+// Папки
 app.get('/api/folders/:userId', async (req, res) => {
     const client = await pool.connect();
     try {
@@ -554,6 +568,7 @@ app.post('/api/folders/:userId', async (req, res) => {
     }
 });
 
+// Загрузка файлов
 app.post('/api/upload', upload.single('file'), (req, res) => {
     if (req.file) {
         res.json({ url: `/uploads/${req.file.filename}`, type: req.file.mimetype, name: req.file.originalname, size: req.file.size });
@@ -565,42 +580,57 @@ app.post('/api/upload', upload.single('file'), (req, res) => {
 // === SOCKET ===
 io.on('connection', (socket) => {
     let userId = null;
-    
+
     socket.on('user_login', async (id) => {
         userId = id;
         onlineUsers.set(id, socket.id);
         const client = await pool.connect();
         try {
             await client.query(`UPDATE users SET status = 'online', last_seen = CURRENT_TIMESTAMP WHERE id = $1`, [id]);
+            const userResult = await client.query('SELECT public_key FROM users WHERE id = $1', [id]);
+            if (userResult.rows[0]?.public_key) {
+                userPublicKeys.set(id, userResult.rows[0].public_key);
+            }
         } finally {
             client.release();
         }
         io.emit('user_status', { id, online: true });
     });
-    
-    socket.on('join_chat', (chatId) => { socket.join(chatId); });
-    
+
+    socket.on('join_chat', (chatId) => {
+        socket.join(chatId);
+    });
+
     socket.on('send_message', async (data) => {
         const client = await pool.connect();
         try {
             const settingsResult = await client.query('SELECT blocked FROM settings WHERE user_id = $1', [data.message.from]);
             const settings = settingsResult.rows[0];
             if (settings?.blocked?.includes(data.message.from)) return;
-            
-            const result = await client.query(`INSERT INTO messages (chat_id, from_user_id, text, encrypted, type, file_name, file_size, duration, reply_to, reply_to_index, read_by) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id, created_at`, [data.chatId, data.message.from, data.message.text, data.message.encrypted ?? false, data.message.type, data.message.fileName, data.message.fileSize, data.message.duration, data.message.replyTo, data.message.replyToIndex, [data.message.from]]);
-            
+
+            const result = await client.query(`INSERT INTO messages (chat_id, from_user_id, text, encrypted, type, file_name, file_size, duration, reply_to, reply_to_index, read_by) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id, created_at`, 
+                [data.chatId, data.message.from, data.message.text, data.message.encrypted ?? false, data.message.type, data.message.fileName, data.message.fileSize, data.message.duration, data.message.replyTo, data.message.replyToIndex, [data.message.from]]);
+
             data.message.id = result.rows[0].id;
             data.message.time = result.rows[0].created_at;
-            
-            io.to(data.chatId).emit('receive_message', { chatId: data.chatId, message: data.message, senderId: data.message.from });
-            
+
+            io.to(data.chatId).emit('receive_message', {
+                chatId: data.chatId,
+                message: data.message,
+                senderId: data.message.from
+            });
+
             const msgsResult = await client.query('SELECT COUNT(*) FROM messages WHERE chat_id = $1', [data.chatId]);
             if (parseInt(msgsResult.rows[0].count) === 1) {
                 const otherUser = data.chatId.replace(data.message.from + '_', '').replace('_' + data.message.from, '');
                 if (otherUser && otherUser !== data.message.from) {
                     const otherSocketId = onlineUsers.get(otherUser);
                     if (otherSocketId) {
-                        io.to(otherSocketId).emit('new_chat_notification', { from: data.message.from, fromName: data.message.from, message: (data.message.text || '').substring(0, 20) + '...' });
+                        io.to(otherSocketId).emit('new_chat_notification', {
+                            from: data.message.from,
+                            fromName: data.message.from,
+                            message: (data.message.text || '').substring(0, 20) + '...'
+                        });
                     }
                 }
             }
@@ -610,7 +640,7 @@ io.on('connection', (socket) => {
             client.release();
         }
     });
-    
+
     socket.on('message_read', async (data) => {
         const client = await pool.connect();
         try {
@@ -629,7 +659,7 @@ io.on('connection', (socket) => {
             client.release();
         }
     });
-    
+
     socket.on('delete_message', async (data) => {
         const client = await pool.connect();
         try {
@@ -644,22 +674,15 @@ io.on('connection', (socket) => {
             client.release();
         }
     });
-    
+
     socket.on('typing', (data) => {
-        if (!typingUsers.has(data.chatId)) typingUsers.set(data.chatId, new Map());
-        typingUsers.get(data.chatId).set(data.userId, Date.now());
         socket.to(data.chatId).emit('user_typing', data);
-        setTimeout(() => {
-            if (typingUsers.has(data.chatId)) {
-                typingUsers.get(data.chatId).delete(data.userId);
-                socket.to(data.chatId).emit('stop_typing', { chatId: data.chatId, userId: data.userId });
-            }
-        }, 3000);
     });
-    
+
     socket.on('disconnect', async () => {
         if (userId) {
             onlineUsers.delete(userId);
+            userPublicKeys.delete(userId);
             const client = await pool.connect();
             try {
                 await client.query(`UPDATE users SET status = 'offline', last_seen = CURRENT_TIMESTAMP WHERE id = $1`, [userId]);
@@ -686,11 +709,12 @@ createTables().then(() => {
             client.release();
         }
     })();
-    
+
     const PORT = process.env.PORT || 3000;
     server.listen(PORT, '0.0.0.0', () => {
         console.log(`✅ SERVER RUNNING ON PORT ${PORT}`);
         console.log(`🌍 Local: http://localhost:${PORT}`);
+        console.log(`🔐 RSA Public Key: ${publicKey.substring(0, 50)}...`);
     });
 }).catch(err => {
     console.error('❌ Failed to initialize:', err);
