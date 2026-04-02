@@ -7,22 +7,41 @@ const multer = require('multer');
 const { Pool } = require('pg');
 const NodeRSA = require('node-rsa');
 const path = require('path');
+const helmet = require('helmet');
 require('dotenv').config();
 
 const app = express();
 const server = http.createServer(app);
+
+// Настройка Socket.IO с CORS
 const io = new Server(server, { 
     cors: { 
-        origin: "*",
-        methods: ["GET", "POST"]
-    } 
+        origin: process.env.NODE_ENV === 'production' ? false : "*",
+        methods: ["GET", "POST"],
+        credentials: true
+    },
+    pingTimeout: 60000,
+    pingInterval: 25000
 });
 
-app.use(cors());
+// Безопасные заголовки
+app.use(helmet({
+    contentSecurityPolicy: false, // Отключаем для разработки
+    crossOriginEmbedderPolicy: false
+}));
+
+app.use(cors({
+    origin: process.env.NODE_ENV === 'production' ? false : "*",
+    credentials: true
+}));
+
 app.use(express.static(path.join(__dirname, 'public')));
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+app.use('/components', express.static(path.join(__dirname, 'components')));
+app.use('/js', express.static(path.join(__dirname, 'js')));
+app.use('/css', express.static(path.join(__dirname, 'css')));
 
 // === RSA KEY GENERATION ===
 const rsaKey = new NodeRSA({ b: 512 });
@@ -160,13 +179,19 @@ app.get('/api/public-key', (req, res) => {
 // Регистрация
 app.post('/api/register', async (req, res) => {
     const { id, name, surname, password, avatarColor, avatarImage, bio, publicKey } = req.body;
-    if (!id.startsWith('@')) return res.status(400).json({ error: 'ID должен начинаться с @' });
+    
+    if (!id || !id.startsWith('@')) {
+        return res.status(400).json({ error: 'ID должен начинаться с @' });
+    }
 
     const client = await pool.connect();
     try {
         const existing = await client.query('SELECT * FROM users WHERE id = $1', [id]);
+        
         if (existing.rows.length > 0) {
-            if (existing.rows[0].password !== password) return res.status(401).json({ error: 'Неверный пароль' });
+            if (existing.rows[0].password !== password) {
+                return res.status(401).json({ error: 'Неверный пароль' });
+            }
             return res.json({ success: true, user: existing.rows[0], action: 'login' });
         }
 
@@ -209,11 +234,23 @@ app.post('/api/register', async (req, res) => {
 // Логин
 app.post('/api/login', async (req, res) => {
     const { id, password } = req.body;
+    
+    if (!id || !password) {
+        return res.status(400).json({ error: 'Введите ID и пароль' });
+    }
+
     const client = await pool.connect();
     try {
         const result = await client.query('SELECT * FROM users WHERE id = $1', [id]);
-        if (result.rows.length === 0) return res.status(404).json({ error: 'Пользователь не найден' });
-        if (result.rows[0].password !== password) return res.status(401).json({ error: 'Неверный пароль' });
+        
+        if (result.rows.length === 0) {
+            return res.status(404).json({ error: 'Пользователь не найден' });
+        }
+        
+        if (result.rows[0].password !== password) {
+            return res.status(401).json({ error: 'Неверный пароль' });
+        }
+        
         res.json({ success: true, user: result.rows[0] });
     } catch (err) {
         console.error('Login error:', err);
@@ -591,6 +628,8 @@ io.on('connection', (socket) => {
             if (userResult.rows[0]?.public_key) {
                 userPublicKeys.set(id, userResult.rows[0].public_key);
             }
+        } catch (err) {
+            console.error('User login error:', err);
         } finally {
             client.release();
         }
@@ -686,6 +725,8 @@ io.on('connection', (socket) => {
             const client = await pool.connect();
             try {
                 await client.query(`UPDATE users SET status = 'offline', last_seen = CURRENT_TIMESTAMP WHERE id = $1`, [userId]);
+            } catch (err) {
+                console.error('Disconnect error:', err);
             } finally {
                 client.release();
             }
@@ -705,6 +746,8 @@ createTables().then(() => {
                 await client.query(`INSERT INTO settings (user_id, privacy, blocked, notifications, sound) VALUES ('@support', '{"showBio": true, "showChannels": true, "whoCanMessage": "all"}', '{}', true, true)`);
                 console.log('✅ Support bot created');
             }
+        } catch (err) {
+            console.error('Support bot error:', err);
         } finally {
             client.release();
         }
@@ -718,4 +761,15 @@ createTables().then(() => {
     });
 }).catch(err => {
     console.error('❌ Failed to initialize:', err);
+    process.exit(1);
+});
+
+// Graceful shutdown
+process.on('SIGTERM', async () => {
+    console.log('SIGTERM signal received: closing HTTP server');
+    await pool.end();
+    server.close(() => {
+        console.log('HTTP server closed');
+        process.exit(0);
+    });
 });
