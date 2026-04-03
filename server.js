@@ -177,7 +177,7 @@ app.get('/api/public-key', (req, res) => {
 });
 
 // Регистрация
-app.post('/api/register', async (req, res) => {
+app.get('/api/register', async (req, res) => {
     const { id, name, surname, password, avatarColor, avatarImage, bio, publicKey } = req.body;
     
     if (!id || !id.startsWith('@')) {
