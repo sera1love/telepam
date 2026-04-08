@@ -1,4 +1,6 @@
-// === MAIN APP MODULE ===
+// Делаем socket доступным для всех модулей
+window.socket = io();
+
 const App = {
     currentUser: null,
     currentChatId: null,
@@ -10,211 +12,90 @@ const App = {
     folders: [],
     selectedMembers: [],
     allGroups: [],
-    userSettings: { accentColor: '#5288c1', sound: true, notifications: true },
+    userSettings: { accentColor: '#007aff', sound: true, notifications: true },
     isRecording: false,
     mediaRecorder: null,
     mediaChunks: [],
     recordingTimer: null,
     recordingSeconds: 0,
+    recordPressTimer: null,
+    replyToMessage: null,
+    typingTimeout: null,
 
     async init() {
-        try {
-            // Initialize crypto
-            if (window.CryptoModule) {
-                await CryptoModule.init();
-            }
-
-            // Initialize modules
-            AuthModule.init();
-            MessagesModule.init();
-            ChatModule.init();
-
-            // Load initial data
-            await this.loadUserSettings();
-            await this.loadUsers();
-            await this.loadFriends();
-            await this.loadGroups();
-            await this.loadFolders();
-
-            // Setup socket events
-            this.setupSocketEvents();
-
-            console.log('✅ Telepam initialized');
-        } catch (error) {
-            console.error('App init error:', error);
-        }
+        await Crypto.init();
+        this.setupSocketEvents();
+        this.loadUserSettings();
+        this.checkAuth();
+        if ('Notification' in window) Notification.requestPermission();
     },
 
     setupSocketEvents() {
         socket.on('receive_message', (data) => {
-            if (data.message.encrypted && window.CryptoModule) {
-                data.message.text = CryptoModule.simpleDecrypt(data.message.text);
-            }
-
             if (data.chatId === this.currentChatId) {
-                const area = getElement('messagesArea');
-                if (area) {
-                    const div = document.createElement('div');
-                    div.className = `message ${data.message.from === this.currentUser?.id ? 'me' : 'other'} animate-fade`;
-
-                    let content = data.message.text;
-                    if (data.message.type === 'sticker') {
-                        content = `<div style="font-size:48px;">${data.message.text}</div>`;
-                    } else if (data.message.type === 'image') {
-                        content = `<img src="${data.message.text}">`;
-                    } else if (data.message.type === 'video') {
-                        content = `<video src="${data.message.text}" controls></video>`;
-                    } else if (data.message.type === 'voice') {
-                        content = window.renderVoiceMessage ? renderVoiceMessage(data.message.text, data.message.duration || '0:00') : `<audio src="${data.message.text}" controls></audio>`;
-                    }
-
-                    div.innerHTML = `${content}<div class="message-time">${data.message.time}</div>`;
-                    area.appendChild(div);
-                    area.scrollTop = area.scrollHeight;
-                }
-
-                if (data.message.from !== this.currentUser?.id) {
-                    Utils.playNotificationSound();
-                }
+                MessagesModule.renderMessage(data.message);
+                if (data.message.from !== this.currentUser?.id) Utils.playNotificationSound();
             }
-
-            ChatModule.loadChats();
+            this.loadChats();
         });
 
         socket.on('user_status', (data) => {
             const user = this.allUsers.find(u => u.id === data.id);
-            if (user) {
-                user.online = data.online;
-                ChatModule.loadChats();
-            }
+            if (user) { user.online = data.online; this.loadChats(); }
         });
 
         socket.on('user_typing', (data) => {
             if (data.chatId === this.currentChatId && data.userId !== this.currentUser?.id) {
-                const indicator = getElement('typingIndicator');
-                if (indicator) {
-                    indicator.innerText = 'печатает...';
-                    indicator.classList.remove('hidden');
-                    setTimeout(() => indicator.classList.add('hidden'), 3000);
-                }
+                const ind = document.getElementById('typingIndicator');
+                if (ind) { ind.innerText = 'печатает...'; ind.classList.remove('hidden'); clearTimeout(this.typingTimeout); this.typingTimeout = setTimeout(() => ind.classList.add('hidden'), 3000); }
             }
         });
 
         socket.on('message_deleted', () => {
-            if (this.currentChatId) {
-                fetch(`/api/messages/${this.currentChatId}`)
-                    .then(r => r.json())
-                    .then(msgs => {
-                        const decrypted = msgs.map(m => {
-                            if (m.encrypted && window.CryptoModule) {
-                                m.text = CryptoModule.simpleDecrypt(m.text);
-                            }
-                            return m;
-                        });
-                        MessagesModule.renderMessages(decrypted);
-                    });
-            }
-            ChatModule.loadChats();
+            if (this.currentChatId) ChatModule.loadMessages(this.currentChatId);
+            this.loadChats();
         });
     },
 
-    showApp() {
-        toggleHidden('appInterface', true);
-
-        this.updateMyProfile();
-        ChatModule.loadChats();
-    },
-
-    updateMyProfile() {
-        if (!this.currentUser) return;
-
-        const btn = getElement('myProfileAvatar');
-        const name = getElement('myProfileName');
-        const id = getElement('myProfileId');
-
-        if (this.currentUser.avatarImage) {
-            if (btn) btn.innerHTML = `<img src="${this.currentUser.avatarImage}" alt="">`;
-        } else {
-            if (btn) btn.textContent = this.currentUser.id[1].toUpperCase();
-        }
-
-        if (btn) btn.style.background = this.currentUser.avatarColor;
-        if (name) name.textContent = `${this.currentUser.name} ${this.currentUser.surname}`;
-        if (id) id.textContent = this.currentUser.id;
-    },
-
-    async loadUserSettings() {
+    async checkAuth() {
         try {
-            const saved = localStorage.getItem('mm_settings_' + (this.currentUser?.id || 'default'));
+            const saved = localStorage.getItem('mm_user');
             if (saved) {
-                this.userSettings = JSON.parse(saved);
-                document.documentElement.style.setProperty('--accent', this.userSettings.accentColor);
+                this.currentUser = JSON.parse(saved);
+                socket.emit('user_login', this.currentUser.id);
+                // Отправляем публичный ключ при входе
+                if (Crypto.publicKeyBase64) {
+                    await fetch(`/api/users/${this.currentUser.id}`, { method: 'PUT', headers: {'Content-Type':'application/json'}, body: JSON.stringify({publicKey: Crypto.publicKeyBase64}) });
+                }
+                this.showApp();
+            } else {
+                document.getElementById('authModal').classList.remove('hidden');
             }
-        } catch (error) {
-            console.error('Load settings error:', error);
+        } catch (e) {
+            console.error('Auth error:', e);
+            document.getElementById('authModal').classList.remove('hidden');
         }
     },
 
-    async loadUsers() {
-        try {
-            const res = await fetch('/api/users');
-            this.allUsers = await res.json();
-        } catch (error) {
-            console.error('Load users error:', error);
-        }
+    showApp() {
+        document.getElementById('appInterface').classList.remove('hidden');
+        document.getElementById('appInterface').style.display = 'flex';
+        this.updateMyProfile();
+        this.loadUsers();
+        this.loadFriends();
+        this.loadChats();
+        this.loadFolders();
+        this.loadGroups();
     },
 
-    async loadFriends() {
-        try {
-            if (!this.currentUser?.id) return;
-            const res = await fetch(`/api/friends/${this.currentUser.id}`);
-            this.friends = await res.json();
-        } catch (error) {
-            console.error('Load friends error:', error);
-        }
-    },
-
-    async loadGroups() {
-        try {
-            const res = await fetch('/api/groups');
-            this.allGroups = await res.json();
-        } catch (error) {
-            console.error('Load groups error:', error);
-        }
-    },
-
-    async loadFolders() {
-        try {
-            if (!this.currentUser?.id) return;
-            const res = await fetch(`/api/folders/${this.currentUser.id}`);
-            this.folders = await res.json();
-
-            const bar = getElement('foldersBar');
-            if (!bar) return;
-
-            bar.innerHTML = '';
-            this.folders.forEach(f => {
-                const tab = document.createElement('div');
-                tab.className = `folder-tab ${this.currentFolder === f.id ? 'active' : ''}`;
-                tab.textContent = `${f.icon} ${f.name}`;
-                tab.onclick = () => {
-                    this.currentFolder = f.id;
-                    ChatModule.loadChats();
-                };
-                bar.appendChild(tab);
-            });
-        } catch (error) {
-            console.error('Load folders error:', error);
-        }
-    }
+    updateMyProfile() { /* твой код */ },
+    loadUserSettings() { /* твой код */ },
+    loadUsers() { /* твой код */ },
+    loadFriends() { /* твой код */ },
+    loadGroups() { /* твой код */ },
+    loadChats() { /* твой код */ },
+    loadFolders() { /* твой код */ }
 };
 
-// Initialize app when DOM is ready
-if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', () => App.init());
-} else {
-    App.init();
-}
-
-// Export
 window.App = App;
+document.addEventListener('DOMContentLoaded', () => App.init());
