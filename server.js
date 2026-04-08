@@ -5,7 +5,6 @@ const cors = require('cors');
 const fs = require('fs');
 const multer = require('multer');
 const { Pool } = require('pg');
-const NodeRSA = require('node-rsa');
 const path = require('path');
 const helmet = require('helmet');
 require('dotenv').config();
@@ -13,44 +12,34 @@ require('dotenv').config();
 const app = express();
 const server = http.createServer(app);
 
-// Настройка Socket.IO с CORS
+// Socket.IO настройка
 const io = new Server(server, { 
-    cors: { 
-        origin: process.env.NODE_ENV === 'production' ? false : "*",
-        methods: ["GET", "POST"],
-        credentials: true
-    },
+    cors: { origin: "*", methods: ["GET", "POST"], credentials: true },
     pingTimeout: 60000,
     pingInterval: 25000
 });
 
-// Безопасные заголовки
-app.use(helmet({
-    contentSecurityPolicy: false, // Отключаем для разработки
-    crossOriginEmbedderPolicy: false
-}));
+// Безопасные заголовки (CSP отключен для разработки)
+app.use(helmet({ contentSecurityPolicy: false, crossOriginEmbedderPolicy: false }));
+app.use(cors({ origin: "*", credentials: true }));
 
-app.use(cors({
-    origin: process.env.NODE_ENV === 'production' ? false : "*",
-    credentials: true
-}));
+// === ИСПРАВЛЕНИЕ 404: Явно отдаем index.html ===
+app.get('/', (req, res) => {
+    res.sendFile(path.join(__dirname, 'index.html'));
+});
 
-app.use(express.static(path.join(__dirname, 'public')));
+// === ИСПРАВЛЕНИЕ favicon 404 ===
+app.get('/favicon.ico', (req, res) => res.status(204).end());
+
+// Статические файлы
+app.use(express.static(__dirname));
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
-app.use('/components', express.static(path.join(__dirname, 'components')));
-app.use('/js', express.static(path.join(__dirname, 'js')));
-app.use('/css', express.static(path.join(__dirname, 'css')));
 
-// === RSA KEY GENERATION ===
-const rsaKey = new NodeRSA({ b: 512 });
-const publicKey = rsaKey.exportKey('public');
-const privateKey = rsaKey.exportKey('private');
-
-// === POSTGRESQL ПОДКЛЮЧЕНИЕ ===
+// === PostgreSQL ===
 const pool = new Pool({
-    connectionString: process.env.DATABASE_URL || 'postgresql://db_telemapm_user:8MAMpE6XiZRJPCyBdj2NOUa7H8CFywEg@dpg-d71gk36a2pns73f6tlag-a/db_telemapm',
+    connectionString: process.env.DATABASE_URL,
     ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false,
     max: 20,
     idleTimeoutMillis: 30000,
@@ -60,65 +49,39 @@ const pool = new Pool({
 pool.on('connect', () => console.log('✅ PostgreSQL connected'));
 pool.on('error', (err) => console.error('❌ PostgreSQL error:', err));
 
-// === СОЗДАНИЕ ТАБЛИЦ ===
+// === Создание таблиц ===
 async function createTables() {
     const client = await pool.connect();
     try {
         await client.query(`CREATE TABLE IF NOT EXISTS users (
-            id TEXT PRIMARY KEY,
-            name TEXT NOT NULL,
-            surname TEXT,
-            password TEXT NOT NULL,
-            avatar_color TEXT DEFAULT '#007aff',
-            avatar_image TEXT,
-            bio TEXT,
-            public_key TEXT,
-            channels JSONB DEFAULT '[]',
-            status TEXT DEFAULT 'offline',
-            last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            id TEXT PRIMARY KEY, name TEXT NOT NULL, surname TEXT, password TEXT NOT NULL,
+            avatar_color TEXT DEFAULT '#007aff', avatar_image TEXT, bio TEXT,
+            public_key TEXT, channels JSONB DEFAULT '[]',
+            status TEXT DEFAULT 'offline', last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )`);
 
         await client.query(`CREATE TABLE IF NOT EXISTS friends (
-            user_id TEXT NOT NULL,
-            friend_id TEXT NOT NULL,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            user_id TEXT NOT NULL, friend_id TEXT NOT NULL, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             PRIMARY KEY (user_id, friend_id),
             FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
             FOREIGN KEY (friend_id) REFERENCES users(id) ON DELETE CASCADE
         )`);
 
         await client.query(`CREATE TABLE IF NOT EXISTS groups (
-            id TEXT PRIMARY KEY,
-            name TEXT NOT NULL,
-            description TEXT,
-            creator_id TEXT NOT NULL,
-            avatar_color TEXT DEFAULT '#007aff',
-            avatar_image TEXT,
-            type TEXT DEFAULT 'group',
-            members TEXT[] DEFAULT '{}',
-            admins TEXT[] DEFAULT '{}',
+            id TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT, creator_id TEXT NOT NULL,
+            avatar_color TEXT DEFAULT '#007aff', avatar_image TEXT, type TEXT DEFAULT 'group',
+            members TEXT[] DEFAULT '{}', admins TEXT[] DEFAULT '{}',
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (creator_id) REFERENCES users(id) ON DELETE CASCADE
         )`);
 
         await client.query(`CREATE TABLE IF NOT EXISTS messages (
-            id SERIAL PRIMARY KEY,
-            chat_id TEXT NOT NULL,
-            from_user_id TEXT NOT NULL,
-            text TEXT,
-            encrypted BOOLEAN DEFAULT false,
-            type TEXT DEFAULT 'text',
-            file_name TEXT,
-            file_size INTEGER,
-            duration TEXT,
-            reply_to TEXT,
-            reply_to_index INTEGER,
-            deleted BOOLEAN DEFAULT false,
-            edited BOOLEAN DEFAULT false,
-            read_by TEXT[] DEFAULT '{}',
-            reactions JSONB DEFAULT '[]',
-            views INTEGER DEFAULT 0,
+            id SERIAL PRIMARY KEY, chat_id TEXT NOT NULL, from_user_id TEXT NOT NULL, text TEXT,
+            encrypted BOOLEAN DEFAULT false, type TEXT DEFAULT 'text', file_name TEXT,
+            file_size INTEGER, duration TEXT, reply_to TEXT, reply_to_index INTEGER,
+            deleted BOOLEAN DEFAULT false, edited BOOLEAN DEFAULT false,
+            read_by TEXT[] DEFAULT '{}', reactions JSONB DEFAULT '[]', views INTEGER DEFAULT 0,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (from_user_id) REFERENCES users(id) ON DELETE CASCADE
         )`);
@@ -126,9 +89,7 @@ async function createTables() {
         await client.query(`CREATE TABLE IF NOT EXISTS settings (
             user_id TEXT PRIMARY KEY,
             privacy JSONB DEFAULT '{"showBio": true, "showChannels": true, "whoCanMessage": "all"}',
-            blocked TEXT[] DEFAULT '{}',
-            notifications BOOLEAN DEFAULT true,
-            sound BOOLEAN DEFAULT true,
+            blocked TEXT[] DEFAULT '{}', notifications BOOLEAN DEFAULT true, sound BOOLEAN DEFAULT true,
             theme JSONB DEFAULT '{"accentColor": "#007aff", "animationSpeed": "normal"}',
             FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
         )`);
@@ -151,7 +112,7 @@ async function createTables() {
     }
 }
 
-// === ЗАГРУЗКА ФАЙЛОВ ===
+// === Загрузка файлов ===
 const UPLOAD_DIR = path.join(__dirname, 'uploads');
 if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 
@@ -159,39 +120,23 @@ const storage = multer.diskStorage({
     destination: (req, file, cb) => cb(null, UPLOAD_DIR),
     filename: (req, file, cb) => cb(null, Date.now() + '-' + file.originalname.replace(/[^a-zA-Z0-9.-]/g, '_'))
 });
+const upload = multer({ storage, limits: { fileSize: 100 * 1024 * 1024 } });
 
-const upload = multer({ 
-    storage,
-    limits: { fileSize: 100 * 1024 * 1024 }
-});
-
-// === ONLINE USERS ===
+// === Онлайн пользователи ===
 let onlineUsers = new Map();
-let userPublicKeys = new Map();
 
 // === API ROUTES ===
-
-// Получить публичный ключ сервера
-app.get('/api/public-key', (req, res) => {
-    res.json({ publicKey });
-});
 
 // Регистрация
 app.post('/api/register', async (req, res) => {
     const { id, name, surname, password, avatarColor, avatarImage, bio, publicKey } = req.body;
-    
-    if (!id || !id.startsWith('@')) {
-        return res.status(400).json({ error: 'ID должен начинаться с @' });
-    }
+    if (!id || !id.startsWith('@')) return res.status(400).json({ error: 'ID должен начинаться с @' });
 
     const client = await pool.connect();
     try {
         const existing = await client.query('SELECT * FROM users WHERE id = $1', [id]);
-        
         if (existing.rows.length > 0) {
-            if (existing.rows[0].password !== password) {
-                return res.status(401).json({ error: 'Неверный пароль' });
-            }
+            if (existing.rows[0].password !== password) return res.status(401).json({ error: 'Неверный пароль' });
             return res.json({ success: true, user: existing.rows[0], action: 'login' });
         }
 
@@ -206,21 +151,14 @@ app.post('/api/register', async (req, res) => {
             last_seen: new Date().toISOString()
         };
 
-        await client.query(`
-            INSERT INTO users (id, name, surname, password, avatar_color, avatar_image, bio, public_key, channels, status, last_seen)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-        `, [id, name, surname, password, newUser.avatar_color, newUser.avatar_image, newUser.bio, 
-            newUser.public_key, JSON.stringify(newUser.channels), newUser.status, newUser.last_seen]);
+        await client.query(`INSERT INTO users (id, name, surname, password, avatar_color, avatar_image, bio, public_key, channels, status, last_seen) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+            [id, name, surname, password, newUser.avatar_color, newUser.avatar_image, newUser.bio, newUser.public_key, JSON.stringify(newUser.channels), newUser.status, newUser.last_seen]);
 
-        await client.query(`
-            INSERT INTO settings (user_id, privacy, blocked, notifications, sound, theme)
-            VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (user_id) DO NOTHING
-        `, [id, JSON.stringify({ showBio: true, showChannels: true, whoCanMessage: 'all' }), [], true, true, 
-            JSON.stringify({ accentColor: '#007aff', animationSpeed: 'normal' })]);
+        await client.query(`INSERT INTO settings (user_id, privacy, blocked, notifications, sound, theme) VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (user_id) DO NOTHING`,
+            [id, JSON.stringify({ showBio: true, showChannels: true, whoCanMessage: 'all' }), [], true, true, JSON.stringify({ accentColor: '#007aff', animationSpeed: 'normal' })]);
 
-        await client.query(`
-            INSERT INTO folders (user_id, folders) VALUES ($1, $2) ON CONFLICT (user_id) DO NOTHING
-        `, [id, JSON.stringify([{ id: 'all', name: 'Все чаты', chats: [], icon: '💬' }])]);
+        await client.query(`INSERT INTO folders (user_id, folders) VALUES ($1, $2) ON CONFLICT (user_id) DO NOTHING`,
+            [id, JSON.stringify([{ id: 'all', name: 'Все чаты', chats: [], icon: '💬' }])]);
 
         res.json({ success: true, user: newUser, action: 'register' });
     } catch (err) {
@@ -234,23 +172,13 @@ app.post('/api/register', async (req, res) => {
 // Логин
 app.post('/api/login', async (req, res) => {
     const { id, password } = req.body;
-    
-    if (!id || !password) {
-        return res.status(400).json({ error: 'Введите ID и пароль' });
-    }
+    if (!id || !password) return res.status(400).json({ error: 'Введите ID и пароль' });
 
     const client = await pool.connect();
     try {
         const result = await client.query('SELECT * FROM users WHERE id = $1', [id]);
-        
-        if (result.rows.length === 0) {
-            return res.status(404).json({ error: 'Пользователь не найден' });
-        }
-        
-        if (result.rows[0].password !== password) {
-            return res.status(401).json({ error: 'Неверный пароль' });
-        }
-        
+        if (result.rows.length === 0) return res.status(404).json({ error: 'Пользователь не найден' });
+        if (result.rows[0].password !== password) return res.status(401).json({ error: 'Неверный пароль' });
         res.json({ success: true, user: result.rows[0] });
     } catch (err) {
         console.error('Login error:', err);
@@ -260,21 +188,13 @@ app.post('/api/login', async (req, res) => {
     }
 });
 
-// Обновление профиля
+// Обновление профиля + публичного ключа
 app.put('/api/users/:id', async (req, res) => {
     const { avatar_image, avatar_color, bio, name, surname, public_key } = req.body;
     const client = await pool.connect();
     try {
-        await client.query(`
-            UPDATE users SET avatar_image = COALESCE($1, avatar_image), 
-                avatar_color = COALESCE($2, avatar_color),
-                bio = COALESCE($3, bio),
-                name = COALESCE($4, name),
-                surname = COALESCE($5, surname),
-                public_key = COALESCE($6, public_key)
-            WHERE id = $7
-        `, [avatar_image, avatar_color, bio, name, surname, public_key, req.params.id]);
-        
+        await client.query(`UPDATE users SET avatar_image = COALESCE($1, avatar_image), avatar_color = COALESCE($2, avatar_color), bio = COALESCE($3, bio), name = COALESCE($4, name), surname = COALESCE($5, surname), public_key = COALESCE($6, public_key) WHERE id = $7`,
+            [avatar_image, avatar_color, bio, name, surname, public_key, req.params.id]);
         const result = await client.query('SELECT * FROM users WHERE id = $1', [req.params.id]);
         res.json({ success: true, user: result.rows[0] });
     } catch (err) {
@@ -291,10 +211,7 @@ app.get('/api/users/search/:query', async (req, res) => {
     const exclude = req.query.exclude;
     const client = await pool.connect();
     try {
-        const result = await client.query(`
-            SELECT id, name, surname, avatar_color, avatar_image, bio, channels, public_key
-            FROM users WHERE (LOWER(id) LIKE $1 OR LOWER(name) LIKE $1) AND id != $2 LIMIT 10
-        `, [`%${query}%`, exclude]);
+        const result = await client.query(`SELECT id, name, surname, avatar_color, avatar_image, bio, channels, public_key FROM users WHERE (LOWER(id) LIKE $1 OR LOWER(name) LIKE $1) AND id != $2 LIMIT 10`, [`%${query}%`, exclude]);
         res.json(result.rows.map(u => ({ ...u, avatarColor: u.avatar_color, avatarImage: u.avatar_image, online: onlineUsers.has(u.id) })));
     } catch (err) {
         console.error('Search error:', err);
@@ -624,10 +541,6 @@ io.on('connection', (socket) => {
         const client = await pool.connect();
         try {
             await client.query(`UPDATE users SET status = 'online', last_seen = CURRENT_TIMESTAMP WHERE id = $1`, [id]);
-            const userResult = await client.query('SELECT public_key FROM users WHERE id = $1', [id]);
-            if (userResult.rows[0]?.public_key) {
-                userPublicKeys.set(id, userResult.rows[0].public_key);
-            }
         } catch (err) {
             console.error('User login error:', err);
         } finally {
@@ -721,7 +634,6 @@ io.on('connection', (socket) => {
     socket.on('disconnect', async () => {
         if (userId) {
             onlineUsers.delete(userId);
-            userPublicKeys.delete(userId);
             const client = await pool.connect();
             try {
                 await client.query(`UPDATE users SET status = 'offline', last_seen = CURRENT_TIMESTAMP WHERE id = $1`, [userId]);
@@ -757,7 +669,6 @@ createTables().then(() => {
     server.listen(PORT, '0.0.0.0', () => {
         console.log(`✅ SERVER RUNNING ON PORT ${PORT}`);
         console.log(`🌍 Local: http://localhost:${PORT}`);
-        console.log(`🔐 RSA Public Key: ${publicKey.substring(0, 50)}...`);
     });
 }).catch(err => {
     console.error('❌ Failed to initialize:', err);
