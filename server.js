@@ -301,5 +301,6 @@ io.on('connection', (socket) => {
 // Запуск
 createTables().then(() => {
     const PORT = process.env.PORT || 3000;
-    server.listen(PORT, '0.0.0.0', () => console.log(`✅ SERVER ON PORT ${PORT} | http://localhost:${PORT}`));
+server.listen(PORT, () => {
+    console.log(`Server is running on port ${PORT}`);
 }).catch(err => { console.error('❌ Init error:', err); process.exit(1); });
