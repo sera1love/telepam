@@ -137,11 +137,16 @@ document.addEventListener('DOMContentLoaded', () => {
         
             try {
                 const response = await fetch('/api/users', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ username, publicKey: Crypto.publicKeyBase64 })
-                });
-                const user = await response.json();
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ username, publicKey: Crypto.publicKeyBase64 })
+            });
+
+            if (!response.ok) {
+                throw new Error(`Ошибка сервера: ${response.status}`);
+            }
+
+const user = await response.json();
             
                 localStorage.setItem('mm_user', JSON.stringify(user));
                 App.currentUser = user;
