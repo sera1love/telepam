@@ -64,7 +64,7 @@ const App = {
     },
 
 
-    document.addEventListener('DOMContentLoaded', () => {
+    document.addEventListener('DOMContentLoaded', ()) => {
         const authForm = document.getElementById('authForm');
         if (authForm) {
             authForm.addEventListener('submit', async (e) => {
