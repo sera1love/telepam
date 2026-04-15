@@ -22,6 +22,12 @@ const App = {
     replyToMessage: null,
     typingTimeout: null,
 
+    getElement(id) {
+        const el = document.getElementById(id);
+        if (!el) console.warn(`Element #${id} not found`);
+        return el;
+    },
+
     async init() {
         await Crypto.init();
         this.setupSocketEvents();
