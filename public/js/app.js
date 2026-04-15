@@ -57,36 +57,66 @@ const App = {
         });
     },
 
-    async checkAuth() {
-        try {
-            const saved = localStorage.getItem('mm_user');
-            if (saved) {
-                this.currentUser = JSON.parse(saved);
-                socket.emit('user_login', this.currentUser.id);
-                // Отправляем публичный ключ при входе
-                if (Crypto.publicKeyBase64) {
-                    await fetch(`/api/users/${this.currentUser.id}`, { method: 'PUT', headers: {'Content-Type':'application/json'}, body: JSON.stringify({publicKey: Crypto.publicKeyBase64}) });
-                }
-                this.showApp();
-            } else {
-                document.getElementById('authModal').classList.remove('hidden');
-            }
-        } catch (e) {
-            console.error('Auth error:', e);
-            document.getElementById('authModal').classList.remove('hidden');
-        }
-    },
+    // Вспомогательная функция для безопасного получения элемента
+getElement: (id) => {
+    const el = document.getElementById(id);
+    if (!el) console.warn(`Element #${id} not found`);
+    return el;
+},
 
-    showApp() {
-        document.getElementById('appInterface').classList.remove('hidden');
-        document.getElementById('appInterface').style.display = 'flex';
-        this.updateMyProfile();
-        this.loadUsers();
-        this.loadFriends();
-        this.loadChats();
-        this.loadFolders();
-        this.loadGroups();
-    },
+async checkAuth() {
+    try {
+        const saved = localStorage.getItem('mm_user');
+        if (saved) {
+            this.currentUser = JSON.parse(saved);
+            socket.emit('user_login', this.currentUser.id);
+            
+            // Отправляем публичный ключ при входе
+            if (Crypto.publicKeyBase64) {
+                await fetch(`/api/users/${this.currentUser.id}`, { 
+                    method: 'PUT', 
+                    headers: {'Content-Type':'application/json'}, 
+                    body: JSON.stringify({publicKey: Crypto.publicKeyBase64}) 
+                });
+            }
+            this.showApp();
+        } else {
+            // 🔐 Безопасное отображение модального окна авторизации
+            const authModal = this.getElement('authModal');
+            if (authModal) {
+                authModal.classList.remove('hidden');
+            } else {
+                console.warn('Auth modal not found, showing fallback');
+                // Опционально: создать модалку динамически или показать алерт
+            }
+        }
+    } catch (e) {
+        console.error('Auth error:', e);
+        // 🔐 То же самое в catch-блоке
+        const authModal = this.getElement('authModal');
+        if (authModal) {
+            authModal.classList.remove('hidden');
+        }
+    }
+},
+
+showApp() {
+    const appInterface = this.getElement('appInterface');
+    if (!appInterface) {
+        console.error('App interface not found!');
+        return;
+    }
+    
+    appInterface.classList.remove('hidden');
+    appInterface.style.display = 'flex';
+    
+    this.updateMyProfile();
+    this.loadUsers();
+    this.loadFriends();
+    this.loadChats();
+    this.loadFolders();
+    this.loadGroups();
+}
 
     updateMyProfile() { /* твой код */ },
     loadUserSettings() { /* твой код */ },
