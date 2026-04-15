@@ -36,7 +36,45 @@ const App = {
     },
 
     setupSocketEvents() {
-        // ... ваш код ...
+        socket.on('receive_message', (data) => {
+            if (data.chatId === this.currentChatId) {
+                MessagesModule.renderMessage(data.message);
+                // ✅ Исправленная проверка:
+                const fromId = data.message && data.message.from;
+                const myId = this.currentUser && this.currentUser.id;
+                if (fromId && myId && fromId !== myId) {
+                    Utils.playNotificationSound();
+                }
+            }
+            this.loadChats();
+        });
+
+        socket.on('user_status', (data) => {
+            const user = this.allUsers.find(u => u.id === data.id);
+            if (user) { 
+                user.online = data.online; 
+                this.loadChats(); 
+            }
+        });
+
+        socket.on('user_typing', (data) => {
+            // ✅ Исправленная проверка:
+            const myId = this.currentUser && this.currentUser.id;
+            if (data.chatId === this.currentChatId && data.userId !== myId) {
+                const ind = document.getElementById('typingIndicator');
+                if (ind) { 
+                    ind.innerText = 'печатает...'; 
+                    ind.classList.remove('hidden'); 
+                    clearTimeout(this.typingTimeout); 
+                    this.typingTimeout = setTimeout(() => ind.classList.add('hidden'), 3000); 
+                }
+            }
+        });
+
+        socket.on('message_deleted', () => {
+            if (this.currentChatId) ChatModule.loadMessages(this.currentChatId);
+            this.loadChats();
+        });
     },
 
     async checkAuth() {
