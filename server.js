@@ -18,6 +18,8 @@ app.use(express.json({ limit: '50mb' }));
 // 1. Статика из папки public/
 app.use(express.static(path.join(__dirname, 'public')));
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+app.use('/js', express.static(path.join(__dirname, 'js')));
+app.use('/css', express.static(path.join(__dirname, 'css')));
 
 // 2. Исправление 404 для favicon
 app.get('/favicon.ico', (req, res) => res.status(204).end());
