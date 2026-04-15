@@ -63,6 +63,38 @@ const App = {
         }
     },
 
+
+document.addEventListener('DOMContentLoaded', () => {
+    const authForm = document.getElementById('authForm');
+    if (authForm) {
+        authForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const username = document.getElementById('usernameInput').value.trim();
+            if (username.length < 2) return;
+            
+            try {
+                const response = await fetch('/api/users', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username, publicKey: Crypto.publicKeyBase64 })
+                });
+                const user = await response.json();
+                
+                localStorage.setItem('mm_user', JSON.stringify(user));
+                App.currentUser = user;
+                
+                document.getElementById('authModal').classList.add('hidden');
+                App.showApp();
+                
+                socket.emit('user_login', user.id);
+            } catch (err) {
+                console.error('Login failed:', err);
+                alert('Не удалось войти. Попробуйте ещё раз.');
+            }
+        });
+    }
+});
+
     showApp() {
         if (!this.toggleClass('appInterface', 'hidden', false)) {
             console.error('App interface not found!');
